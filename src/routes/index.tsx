@@ -77,6 +77,16 @@ function Index() {
     [rows],
   );
 
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    localStorage.setItem("weldsight-theme", theme);
+  }, [theme]);
+
   function runDetection() {
     setLoading(true);
     setHasRun(false);
