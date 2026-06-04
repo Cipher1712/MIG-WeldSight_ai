@@ -42,6 +42,12 @@ function classificationStyle(c: Row["classification"]) {
 }
 
 function Index() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("weldsight-theme") as "light" | "dark") || "dark";
+    }
+    return "dark";
+  });
   const [rows, setRows] = useState<Row[]>([]);
   const [hasRun, setHasRun] = useState(false);
   const [loading, setLoading] = useState(false);
