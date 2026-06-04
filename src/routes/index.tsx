@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -42,6 +42,12 @@ function classificationStyle(c: Row["classification"]) {
 }
 
 function Index() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("weldsight-theme") as "light" | "dark") || "dark";
+    }
+    return "dark";
+  });
   const [rows, setRows] = useState<Row[]>([]);
   const [hasRun, setHasRun] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -71,6 +77,16 @@ function Index() {
     [rows],
   );
 
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    localStorage.setItem("weldsight-theme", theme);
+  }, [theme]);
+
   function runDetection() {
     setLoading(true);
     setHasRun(false);
@@ -86,14 +102,33 @@ function Index() {
       <div className="mx-auto max-w-6xl px-6 py-10 md:px-10 md:py-14">
         {/* Header */}
         <header className="border-b border-border pb-8">
-          <div className="flex items-center gap-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-[var(--status-stable)] shadow-[0_0_12px_var(--status-stable)]" />
-            <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-              WeldSight AI · System Online
-            </span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-2.5 w-2.5 rounded-full bg-[var(--status-stable)] shadow-[0_0_12px_var(--status-stable)]" />
+              <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
+                WeldSight AI &middot; System Online
+              </span>
+            </div>
+            <button
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent"
+              aria-label="Toggle theme"
+            >
+              {theme === "dark" ? (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                  Light
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                  Dark
+                </>
+              )}
+            </button>
           </div>
           <h1 className="mt-4 text-4xl font-normal tracking-tight md:text-5xl">
-            WeldSight AI — Welding Anomaly Monitoring
+            WeldSight AI Welding Anomaly Monitoring
           </h1>
           <p className="mt-3 text-lg italic text-muted-foreground">
             Real-Time MIG Voltage Monitoring and Defect Detection
