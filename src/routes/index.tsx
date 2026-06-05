@@ -196,6 +196,27 @@ function Index() {
     [rows],
   );
 
+  const cluster = useMemo(() => (rows.length ? dbscan(rows) : null), [rows]);
+  const scatterByClass = useMemo(() => {
+    const groups: Record<string, Row[]> = {};
+    for (const r of rows) (groups[r.classification] ||= []).push(r);
+    return groups;
+  }, [rows]);
+  const trendData = useMemo(() => movingAverage(rows), [rows]);
+  const anomalyRegions = useMemo(() => {
+    const out: Array<{ x1: number; x2: number }> = [];
+    let start: number | null = null;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].status === "Anomaly" && start === null) start = rows[i].distance;
+      const next = rows[i + 1];
+      if (start !== null && (!next || next.status !== "Anomaly")) {
+        out.push({ x1: start, x2: rows[i].distance });
+        start = null;
+      }
+    }
+    return out;
+  }, [rows]);
+
   useEffect(() => {
     const root = window.document.documentElement;
     if (theme === "dark") {
