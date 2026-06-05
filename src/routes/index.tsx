@@ -601,3 +601,37 @@ function StatCard({
     </div>
   );
 }
+
+function MetricRow({ label, value, accent }: { label: string; value: number | string; accent?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-border/60 pb-3 last:border-none last:pb-0">
+      <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      <span
+        className="text-2xl tabular-nums"
+        style={{ color: accent ? "var(--status-stable)" : "var(--foreground)" }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: Row & { ma?: number } }> }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-lg backdrop-blur" style={{ fontFamily: "var(--font-serif)" }}>
+      <div className="mb-1 text-muted-foreground">distance_mm: <span className="text-foreground">{p.distance.toFixed(2)}</span></div>
+      <div className="text-muted-foreground">score: <span className="text-foreground tabular-nums">{p.score.toFixed(3)}</span></div>
+      {typeof p.ma === "number" && (
+        <div className="text-muted-foreground">moving avg: <span className="text-foreground tabular-nums">{p.ma.toFixed(3)}</span></div>
+      )}
+      {p.status && (
+        <div className="mt-1 text-muted-foreground">status: <span style={{ color: p.status === "Anomaly" ? "var(--status-anomaly)" : "var(--status-stable)" }}>{p.status}</span></div>
+      )}
+      {p.classification && (
+        <div className="text-muted-foreground">classification: <span style={{ color: CLASS_COLOR[p.classification] }}>{p.classification}</span></div>
+      )}
+    </div>
+  );
+}
