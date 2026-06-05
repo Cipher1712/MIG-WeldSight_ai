@@ -418,7 +418,7 @@ function Index() {
               </div>
               <div className="h-[360px] w-full">
                 <ResponsiveContainer>
-                  <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                  <ScatterChart margin={{ top: 10, right: 20, bottom: 56, left: 10 }}>
                     <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
                     <XAxis
                       type="number"
@@ -426,7 +426,7 @@ function Index() {
                       name="distance_mm"
                       stroke="var(--muted-foreground)"
                       tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
-                      label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                      label={{ value: "distance_mm", position: "insideBottom", offset: -42, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
                     />
                     <YAxis
                       type="number"
@@ -437,7 +437,7 @@ function Index() {
                       label={{ value: "score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
                     />
                     <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
-                    <Legend wrapperStyle={{ fontFamily: "var(--font-serif)", fontSize: 12, color: "var(--muted-foreground)" }} />
+                    <Legend verticalAlign="top" height={32} wrapperStyle={{ fontFamily: "var(--font-serif)", fontSize: 12, color: "var(--muted-foreground)" }} />
                     {Object.entries(scatterByClass).map(([cls, pts]) => (
                       <Scatter
                         key={cls}
@@ -484,7 +484,7 @@ function Index() {
             </div>
             <div className="h-[360px] w-full">
               <ResponsiveContainer>
-                <LineChart data={trendData} margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                <LineChart data={trendData} margin={{ top: 10, right: 20, bottom: 40, left: 10 }}>
                   <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
                   <XAxis
                     dataKey="distance"
@@ -492,7 +492,7 @@ function Index() {
                     domain={["dataMin", "dataMax"]}
                     stroke="var(--muted-foreground)"
                     tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
-                    label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                    label={{ value: "distance_mm", position: "insideBottom", offset: -28, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
                   />
                   <YAxis
                     stroke="var(--muted-foreground)"
