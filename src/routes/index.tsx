@@ -1,5 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import {
+  ResponsiveContainer,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  LineChart,
+  Line,
+  ReferenceLine,
+  ReferenceArea,
+  Legend,
+} from "recharts";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -20,13 +34,118 @@ type Row = {
   classification: "Normal" | "Arc Instability" | "Transfer Change" | "Short Circuit Abnormality";
 };
 
-const SEED: Row[] = [
-  { distance: 23.7, score: 0.32, status: "Stable", classification: "Normal" },
-  { distance: 56.8, score: 1.12, status: "Stable", classification: "Normal" },
-  { distance: 88.3, score: 4.85, status: "Anomaly", classification: "Arc Instability" },
-  { distance: 117.4, score: 8.21, status: "Anomaly", classification: "Transfer Change" },
-  { distance: 143.0, score: 12.7, status: "Anomaly", classification: "Short Circuit Abnormality" },
-];
+const ANOMALY_THRESHOLD = 3.5;
+
+function generateSeed(): Row[] {
+  // Deterministic pseudo-random for stable visuals.
+  let s = 7;
+  const rand = () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+  const rows: Row[] = [];
+  const anomalies: Array<{ at: number; cls: Row["classification"] }> = [
+    { at: 42, cls: "Arc Instability" },
+    { at: 78, cls: "Transfer Change" },
+    { at: 96, cls: "Arc Instability" },
+    { at: 124, cls: "Short Circuit Abnormality" },
+    { at: 151, cls: "Transfer Change" },
+  ];
+  for (let i = 0; i < 80; i++) {
+    const distance = +(i * 2.1 + rand() * 0.8).toFixed(2);
+    const hit = anomalies.find((a) => Math.abs(a.at - distance) < 2.5);
+    let score: number;
+    let status: Row["status"];
+    let classification: Row["classification"];
+    if (hit) {
+      score = +(4 + rand() * 9).toFixed(2);
+      status = "Anomaly";
+      classification = hit.cls;
+    } else {
+      score = +(0.2 + rand() * 1.8).toFixed(2);
+      status = "Stable";
+      classification = "Normal";
+    }
+    rows.push({ distance, score, status, classification });
+  }
+  return rows;
+}
+
+const SEED: Row[] = generateSeed();
+
+const CLASS_COLOR: Record<Row["classification"], string> = {
+  Normal: "var(--status-stable)",
+  "Arc Instability": "var(--tag-orange)",
+  "Transfer Change": "var(--tag-blue)",
+  "Short Circuit Abnormality": "var(--tag-red)",
+};
+
+// Simple DBSCAN over (distance, score) with scaled features.
+function dbscan(points: Row[], eps = 0.6, minPts = 4) {
+  const xs = points.map((p) => p.distance);
+  const ys = points.map((p) => p.score);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const norm = points.map((p) => [
+    (p.distance - xMin) / (xMax - xMin || 1),
+    (p.score - yMin) / (yMax - yMin || 1),
+  ]);
+  const labels = new Array(points.length).fill(-2); // unvisited
+  const dist = (a: number[], b: number[]) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const neighbors = (i: number) => {
+    const out: number[] = [];
+    for (let j = 0; j < norm.length; j++) {
+      if (i !== j && dist(norm[i], norm[j]) <= eps) out.push(j);
+    }
+    return out;
+  };
+  let cluster = 0;
+  for (let i = 0; i < points.length; i++) {
+    if (labels[i] !== -2) continue;
+    const n = neighbors(i);
+    if (n.length < minPts) {
+      labels[i] = -1; // noise
+      continue;
+    }
+    labels[i] = cluster;
+    const queue = [...n];
+    while (queue.length) {
+      const q = queue.shift()!;
+      if (labels[q] === -1) labels[q] = cluster;
+      if (labels[q] !== -2) continue;
+      labels[q] = cluster;
+      const qn = neighbors(q);
+      if (qn.length >= minPts) queue.push(...qn);
+    }
+    cluster++;
+  }
+  // Purity: fraction of points whose class matches the dominant class of their cluster.
+  let matched = 0;
+  let counted = 0;
+  for (let c = 0; c < cluster; c++) {
+    const members = points.filter((_, idx) => labels[idx] === c);
+    if (!members.length) continue;
+    const counts: Record<string, number> = {};
+    for (const m of members) counts[m.classification] = (counts[m.classification] || 0) + 1;
+    const top = Math.max(...Object.values(counts));
+    matched += top;
+    counted += members.length;
+  }
+  const purity = counted ? matched / counted : 0;
+  const noise = labels.filter((l) => l === -1).length;
+  return { labels, clusters: cluster, purity, noise };
+}
+
+function movingAverage(rows: Row[], window = 5) {
+  return rows.map((r, i) => {
+    const start = Math.max(0, i - Math.floor(window / 2));
+    const end = Math.min(rows.length, i + Math.ceil(window / 2));
+    const slice = rows.slice(start, end);
+    const avg = slice.reduce((a, b) => a + b.score, 0) / slice.length;
+    return { distance: r.distance, score: r.score, ma: +avg.toFixed(3), classification: r.classification, status: r.status };
+  });
+}
 
 function classificationStyle(c: Row["classification"]) {
   switch (c) {
