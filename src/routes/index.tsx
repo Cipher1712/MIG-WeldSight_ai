@@ -408,6 +408,140 @@ function Index() {
           </section>
         )}
 
+        {/* Cluster Visualization */}
+        {hasRun && cluster && (
+          <section className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-2xl">Anomaly Cluster Separation</h2>
+                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">DBSCAN</span>
+              </div>
+              <div className="h-[360px] w-full">
+                <ResponsiveContainer>
+                  <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                    <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
+                    <XAxis
+                      type="number"
+                      dataKey="distance"
+                      name="distance_mm"
+                      stroke="var(--muted-foreground)"
+                      tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                      label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="score"
+                      name="score"
+                      stroke="var(--muted-foreground)"
+                      tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                      label={{ value: "score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                    />
+                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
+                    <Legend wrapperStyle={{ fontFamily: "var(--font-serif)", fontSize: 12, color: "var(--muted-foreground)" }} />
+                    {Object.entries(scatterByClass).map(([cls, pts]) => (
+                      <Scatter
+                        key={cls}
+                        name={cls}
+                        data={pts}
+                        fill={CLASS_COLOR[cls as Row["classification"]]}
+                        animationDuration={800}
+                      />
+                    ))}
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+              <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
+                Cluster Separation Quality
+              </div>
+              <div className="mt-6 space-y-5">
+                <MetricRow label="Clusters" value={cluster.clusters} />
+                <MetricRow label="Cluster Purity" value={`${(cluster.purity * 100).toFixed(1)}%`} accent />
+                <MetricRow label="Noise Points" value={cluster.noise} />
+              </div>
+              <p className="mt-6 text-xs italic leading-relaxed text-muted-foreground">
+                Normal windows condense into dense clusters; anomalies surface as
+                isolated noise points outside the manifold.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {/* Trend Visualization */}
+        {hasRun && (
+          <section className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-2xl">Weld Process Behavior</h2>
+              <div className="flex items-center gap-4 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-4 rounded-sm" style={{ background: "var(--status-stable)" }} /> Stable
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-4 rounded-sm" style={{ background: "var(--status-anomaly)" }} /> Anomaly
+                </span>
+              </div>
+            </div>
+            <div className="h-[360px] w-full">
+              <ResponsiveContainer>
+                <LineChart data={trendData} margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
+                  <XAxis
+                    dataKey="distance"
+                    type="number"
+                    domain={["dataMin", "dataMax"]}
+                    stroke="var(--muted-foreground)"
+                    tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                    label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                  />
+                  <YAxis
+                    stroke="var(--muted-foreground)"
+                    tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                    label={{ value: "score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                  />
+                  <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
+                  {anomalyRegions.map((r, i) => (
+                    <ReferenceArea
+                      key={i}
+                      x1={r.x1}
+                      x2={r.x2}
+                      fill="var(--status-anomaly)"
+                      fillOpacity={0.12}
+                      stroke="var(--status-anomaly)"
+                      strokeOpacity={0.25}
+                    />
+                  ))}
+                  <ReferenceLine
+                    y={ANOMALY_THRESHOLD}
+                    stroke="var(--status-warning)"
+                    strokeDasharray="6 4"
+                    label={{ value: "Reconstruction Threshold", position: "insideTopRight", fill: "var(--status-warning)", fontSize: 11, fontFamily: "var(--font-serif)" }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    name="score"
+                    stroke="var(--foreground)"
+                    strokeWidth={1.5}
+                    dot={false}
+                    animationDuration={800}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ma"
+                    name="moving avg"
+                    stroke="var(--tag-blue)"
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    animationDuration={800}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        )}
+
         <footer className="mt-12 text-center text-xs italic text-muted-foreground">
           WeldSight AI · Industrial Intelligence Platform
         </footer>
