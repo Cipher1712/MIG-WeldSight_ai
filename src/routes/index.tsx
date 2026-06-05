@@ -1,5 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import {
+  ResponsiveContainer,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  LineChart,
+  Line,
+  ReferenceLine,
+  ReferenceArea,
+  Legend,
+} from "recharts";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -20,13 +34,118 @@ type Row = {
   classification: "Normal" | "Arc Instability" | "Transfer Change" | "Short Circuit Abnormality";
 };
 
-const SEED: Row[] = [
-  { distance: 23.7, score: 0.32, status: "Stable", classification: "Normal" },
-  { distance: 56.8, score: 1.12, status: "Stable", classification: "Normal" },
-  { distance: 88.3, score: 4.85, status: "Anomaly", classification: "Arc Instability" },
-  { distance: 117.4, score: 8.21, status: "Anomaly", classification: "Transfer Change" },
-  { distance: 143.0, score: 12.7, status: "Anomaly", classification: "Short Circuit Abnormality" },
-];
+const ANOMALY_THRESHOLD = 3.5;
+
+function generateSeed(): Row[] {
+  // Deterministic pseudo-random for stable visuals.
+  let s = 7;
+  const rand = () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+  const rows: Row[] = [];
+  const anomalies: Array<{ at: number; cls: Row["classification"] }> = [
+    { at: 42, cls: "Arc Instability" },
+    { at: 78, cls: "Transfer Change" },
+    { at: 96, cls: "Arc Instability" },
+    { at: 124, cls: "Short Circuit Abnormality" },
+    { at: 151, cls: "Transfer Change" },
+  ];
+  for (let i = 0; i < 80; i++) {
+    const distance = +(i * 2.1 + rand() * 0.8).toFixed(2);
+    const hit = anomalies.find((a) => Math.abs(a.at - distance) < 2.5);
+    let score: number;
+    let status: Row["status"];
+    let classification: Row["classification"];
+    if (hit) {
+      score = +(4 + rand() * 9).toFixed(2);
+      status = "Anomaly";
+      classification = hit.cls;
+    } else {
+      score = +(0.2 + rand() * 1.8).toFixed(2);
+      status = "Stable";
+      classification = "Normal";
+    }
+    rows.push({ distance, score, status, classification });
+  }
+  return rows;
+}
+
+const SEED: Row[] = generateSeed();
+
+const CLASS_COLOR: Record<Row["classification"], string> = {
+  Normal: "var(--status-stable)",
+  "Arc Instability": "var(--tag-orange)",
+  "Transfer Change": "var(--tag-blue)",
+  "Short Circuit Abnormality": "var(--tag-red)",
+};
+
+// Simple DBSCAN over (distance, score) with scaled features.
+function dbscan(points: Row[], eps = 0.6, minPts = 4) {
+  const xs = points.map((p) => p.distance);
+  const ys = points.map((p) => p.score);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const norm = points.map((p) => [
+    (p.distance - xMin) / (xMax - xMin || 1),
+    (p.score - yMin) / (yMax - yMin || 1),
+  ]);
+  const labels = new Array(points.length).fill(-2); // unvisited
+  const dist = (a: number[], b: number[]) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const neighbors = (i: number) => {
+    const out: number[] = [];
+    for (let j = 0; j < norm.length; j++) {
+      if (i !== j && dist(norm[i], norm[j]) <= eps) out.push(j);
+    }
+    return out;
+  };
+  let cluster = 0;
+  for (let i = 0; i < points.length; i++) {
+    if (labels[i] !== -2) continue;
+    const n = neighbors(i);
+    if (n.length < minPts) {
+      labels[i] = -1; // noise
+      continue;
+    }
+    labels[i] = cluster;
+    const queue = [...n];
+    while (queue.length) {
+      const q = queue.shift()!;
+      if (labels[q] === -1) labels[q] = cluster;
+      if (labels[q] !== -2) continue;
+      labels[q] = cluster;
+      const qn = neighbors(q);
+      if (qn.length >= minPts) queue.push(...qn);
+    }
+    cluster++;
+  }
+  // Purity: fraction of points whose class matches the dominant class of their cluster.
+  let matched = 0;
+  let counted = 0;
+  for (let c = 0; c < cluster; c++) {
+    const members = points.filter((_, idx) => labels[idx] === c);
+    if (!members.length) continue;
+    const counts: Record<string, number> = {};
+    for (const m of members) counts[m.classification] = (counts[m.classification] || 0) + 1;
+    const top = Math.max(...Object.values(counts));
+    matched += top;
+    counted += members.length;
+  }
+  const purity = counted ? matched / counted : 0;
+  const noise = labels.filter((l) => l === -1).length;
+  return { labels, clusters: cluster, purity, noise };
+}
+
+function movingAverage(rows: Row[], window = 5) {
+  return rows.map((r, i) => {
+    const start = Math.max(0, i - Math.floor(window / 2));
+    const end = Math.min(rows.length, i + Math.ceil(window / 2));
+    const slice = rows.slice(start, end);
+    const avg = slice.reduce((a, b) => a + b.score, 0) / slice.length;
+    return { distance: r.distance, score: r.score, ma: +avg.toFixed(3), classification: r.classification, status: r.status };
+  });
+}
 
 function classificationStyle(c: Row["classification"]) {
   switch (c) {
@@ -76,6 +195,27 @@ function Index() {
     }),
     [rows],
   );
+
+  const cluster = useMemo(() => (rows.length ? dbscan(rows) : null), [rows]);
+  const scatterByClass = useMemo(() => {
+    const groups: Record<string, Row[]> = {};
+    for (const r of rows) (groups[r.classification] ||= []).push(r);
+    return groups;
+  }, [rows]);
+  const trendData = useMemo(() => movingAverage(rows), [rows]);
+  const anomalyRegions = useMemo(() => {
+    const out: Array<{ x1: number; x2: number }> = [];
+    let start: number | null = null;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].status === "Anomaly" && start === null) start = rows[i].distance;
+      const next = rows[i + 1];
+      if (start !== null && (!next || next.status !== "Anomaly")) {
+        out.push({ x1: start, x2: rows[i].distance });
+        start = null;
+      }
+    }
+    return out;
+  }, [rows]);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -268,6 +408,140 @@ function Index() {
           </section>
         )}
 
+        {/* Cluster Visualization */}
+        {hasRun && cluster && (
+          <section className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-2xl">Anomaly Cluster Separation</h2>
+                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">DBSCAN</span>
+              </div>
+              <div className="h-[360px] w-full">
+                <ResponsiveContainer>
+                  <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                    <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
+                    <XAxis
+                      type="number"
+                      dataKey="distance"
+                      name="distance_mm"
+                      stroke="var(--muted-foreground)"
+                      tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                      label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="score"
+                      name="score"
+                      stroke="var(--muted-foreground)"
+                      tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                      label={{ value: "score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                    />
+                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
+                    <Legend wrapperStyle={{ fontFamily: "var(--font-serif)", fontSize: 12, color: "var(--muted-foreground)" }} />
+                    {Object.entries(scatterByClass).map(([cls, pts]) => (
+                      <Scatter
+                        key={cls}
+                        name={cls}
+                        data={pts}
+                        fill={CLASS_COLOR[cls as Row["classification"]]}
+                        animationDuration={800}
+                      />
+                    ))}
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+              <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
+                Cluster Separation Quality
+              </div>
+              <div className="mt-6 space-y-5">
+                <MetricRow label="Clusters" value={cluster.clusters} />
+                <MetricRow label="Cluster Purity" value={`${(cluster.purity * 100).toFixed(1)}%`} accent />
+                <MetricRow label="Noise Points" value={cluster.noise} />
+              </div>
+              <p className="mt-6 text-xs italic leading-relaxed text-muted-foreground">
+                Normal windows condense into dense clusters; anomalies surface as
+                isolated noise points outside the manifold.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {/* Trend Visualization */}
+        {hasRun && (
+          <section className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-2xl">Weld Process Behavior</h2>
+              <div className="flex items-center gap-4 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-4 rounded-sm" style={{ background: "var(--status-stable)" }} /> Stable
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-4 rounded-sm" style={{ background: "var(--status-anomaly)" }} /> Anomaly
+                </span>
+              </div>
+            </div>
+            <div className="h-[360px] w-full">
+              <ResponsiveContainer>
+                <LineChart data={trendData} margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
+                  <XAxis
+                    dataKey="distance"
+                    type="number"
+                    domain={["dataMin", "dataMax"]}
+                    stroke="var(--muted-foreground)"
+                    tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                    label={{ value: "distance_mm", position: "insideBottom", offset: -15, fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                  />
+                  <YAxis
+                    stroke="var(--muted-foreground)"
+                    tick={{ fontFamily: "var(--font-serif)", fontSize: 12 }}
+                    label={{ value: "score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
+                  />
+                  <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
+                  {anomalyRegions.map((r, i) => (
+                    <ReferenceArea
+                      key={i}
+                      x1={r.x1}
+                      x2={r.x2}
+                      fill="var(--status-anomaly)"
+                      fillOpacity={0.12}
+                      stroke="var(--status-anomaly)"
+                      strokeOpacity={0.25}
+                    />
+                  ))}
+                  <ReferenceLine
+                    y={ANOMALY_THRESHOLD}
+                    stroke="var(--status-warning)"
+                    strokeDasharray="6 4"
+                    label={{ value: "Reconstruction Threshold", position: "insideTopRight", fill: "var(--status-warning)", fontSize: 11, fontFamily: "var(--font-serif)" }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    name="score"
+                    stroke="var(--foreground)"
+                    strokeWidth={1.5}
+                    dot={false}
+                    animationDuration={800}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ma"
+                    name="moving avg"
+                    stroke="var(--tag-blue)"
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    animationDuration={800}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        )}
+
         <footer className="mt-12 text-center text-xs italic text-muted-foreground">
           WeldSight AI · Industrial Intelligence Platform
         </footer>
@@ -324,6 +598,40 @@ function StatCard({
         </span>
         <span className="text-sm italic text-muted-foreground">windows</span>
       </div>
+    </div>
+  );
+}
+
+function MetricRow({ label, value, accent }: { label: string; value: number | string; accent?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-border/60 pb-3 last:border-none last:pb-0">
+      <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      <span
+        className="text-2xl tabular-nums"
+        style={{ color: accent ? "var(--status-stable)" : "var(--foreground)" }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: Row & { ma?: number } }> }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-lg backdrop-blur" style={{ fontFamily: "var(--font-serif)" }}>
+      <div className="mb-1 text-muted-foreground">distance_mm: <span className="text-foreground">{p.distance.toFixed(2)}</span></div>
+      <div className="text-muted-foreground">score: <span className="text-foreground tabular-nums">{p.score.toFixed(3)}</span></div>
+      {typeof p.ma === "number" && (
+        <div className="text-muted-foreground">moving avg: <span className="text-foreground tabular-nums">{p.ma.toFixed(3)}</span></div>
+      )}
+      {p.status && (
+        <div className="mt-1 text-muted-foreground">status: <span style={{ color: p.status === "Anomaly" ? "var(--status-anomaly)" : "var(--status-stable)" }}>{p.status}</span></div>
+      )}
+      {p.classification && (
+        <div className="text-muted-foreground">classification: <span style={{ color: CLASS_COLOR[p.classification] }}>{p.classification}</span></div>
+      )}
     </div>
   );
 }
