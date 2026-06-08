@@ -309,7 +309,10 @@ MIG-WELDSIGHT_AI aims to transform welding into a continuously monitored intelli
 
 ## Author
 
-Raagmanas Madhukar
-Project Intern @ Centre of Excellence in Advanced Manufacturing Technology, Indian Institute of Technology Kharagpur
-Electronics Engineering in VLSI Design & Technology @ Manipal Institute of Technology
-Industrial AI | Embedded Systems | Autonomous Systems | Welding Intelligence
+### Raagmanas Madhukar
+
+Project Intern @ Centre of Excellence in Advanced Manufacturing Technology, Indian Institute of Technology Kharagpur  
+
+Electronics Engineering (VLSI Design & Technology) @ Manipal Institute of Technology  
+
+Industrial AI | Embedded Systems | Autonomous Systems | Smart Manufacturing | Welding Intelligence
