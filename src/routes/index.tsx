@@ -11,7 +11,6 @@ import {
   Tooltip,
   LineChart,
   Line,
-  ReferenceLine,
   ReferenceArea,
   Legend,
 } from "recharts";
@@ -23,6 +22,22 @@ import {
   type StreamHandle,
   type WindowPoint,
 } from "@/lib/stream";
+import {
+  DynamicThreshold,
+  MATERIAL_PRESETS,
+  type MaterialKey,
+  type ThresholdSample,
+} from "@/lib/dynamicThreshold";
+import {
+  classifyWindow,
+  deriveFeatures,
+  type PhysicsResult,
+} from "@/lib/physicsClassifier";
+import { MaterialSelector } from "@/components/weldsight/MaterialSelector";
+import { SensitivitySlider } from "@/components/weldsight/SensitivitySlider";
+import { ThresholdCard } from "@/components/weldsight/ThresholdCard";
+import { PhysicsInsightPanel } from "@/components/weldsight/PhysicsInsightPanel";
+import { RecentWindowsTable } from "@/components/weldsight/RecentWindowsTable";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -47,6 +62,11 @@ const CLASS_COLOR: Record<WindowPoint["class"], string> = {
   "Short Circuit Abnormality": "var(--tag-red)",
 };
 
+type EnrichedPoint = WindowPoint & {
+  thresholdSample: ThresholdSample;
+  physics: PhysicsResult;
+};
+
 function Index() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
@@ -60,6 +80,19 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [streamStatus, setStreamStatus] = useState<"idle" | "connecting" | "open" | "simulated" | "closed">("idle");
   const streamRef = useRef<StreamHandle | null>(null);
+
+  // Material + sensitivity (live-tunable)
+  const [material, setMaterial] = useState<MaterialKey>("mild_steel");
+  const [k, setK] = useState<number>(MATERIAL_PRESETS.mild_steel.k);
+
+  // When material changes, snap k to its preset default (slider still adjustable after)
+  const prevMaterialRef = useRef<MaterialKey>(material);
+  useEffect(() => {
+    if (prevMaterialRef.current !== material) {
+      setK(MATERIAL_PRESETS[material].k);
+      prevMaterialRef.current = material;
+    }
+  }, [material]);
 
   // Theme
   useEffect(() => {
@@ -121,16 +154,39 @@ function Index() {
     return { windows: points.length, anomalies, threshold: points.at(-1)?.threshold ?? DEFAULT_THRESHOLD };
   }, [points]);
 
+  // Enriched series: dynamic threshold + physics classification per window.
+  // Recomputed when points / material / k change so the slider feels live
+  // without resetting history.
+  const enriched = useMemo<EnrichedPoint[]>(() => {
+    const dt = new DynamicThreshold(material, k);
+    const out: EnrichedPoint[] = [];
+    let prevScore = 0;
+    points.forEach((p, i) => {
+      const sample = dt.update(p.score);
+      const features = deriveFeatures(p.score, prevScore, i);
+      const physics = classifyWindow(p.score, sample.threshold, features);
+      prevScore = p.score;
+      out.push({ ...p, thresholdSample: sample, physics });
+    });
+    return out;
+  }, [points, material, k]);
+
+  const latestThreshold = enriched.at(-1)?.thresholdSample;
+  const latestPhysics = enriched.at(-1)?.physics ?? null;
+
   // Rolling window for the line chart
   const rolling = useMemo(() => {
-    const slice = points.slice(-ROLLING_WINDOW);
+    const slice = enriched.slice(-ROLLING_WINDOW);
     return slice.map((p) => ({
       distance: p.distance_mm,
       score: p.score,
       status: p.status,
       class: p.class,
+      threshold: p.thresholdSample.threshold,
+      severity: p.physics.severity,
+      colour: p.physics.colour,
     }));
-  }, [points]);
+  }, [enriched]);
 
   const anomalyRegions = useMemo(() => {
     const out: Array<{ x1: number; x2: number }> = [];
@@ -198,6 +254,12 @@ function Index() {
         </header>
 
         {/* Mode Selector */}
+        {/* Material + Sensitivity controls (above mode toggle) */}
+        <section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <MaterialSelector value={material} onChange={setMaterial} />
+          <SensitivitySlider value={k} onChange={setK} />
+        </section>
+
         <section className="mt-8 flex flex-wrap items-center gap-3">
           <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Mode</span>
           <div className="inline-flex rounded-lg border border-border bg-card p-1">
@@ -284,7 +346,11 @@ function Index() {
           <Metric label="Windows Processed" value={stats.windows} />
           <Metric label="Anomalies Found" value={stats.anomalies} accent="anomaly" />
           <Metric label="Live Status" value={liveStatusLabel(mode, streamStatus)} small />
-          <Metric label="Threshold" value={stats.threshold.toFixed(2)} small />
+          <ThresholdCard
+            value={latestThreshold?.threshold ?? MATERIAL_PRESETS[material].floor}
+            warmup={latestThreshold ? latestThreshold.warmup : true}
+            k={k}
+          />
         </section>
 
         {/* Graph Section */}
@@ -319,14 +385,6 @@ function Index() {
                     label={{ value: "Anomaly Score", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)", style: { fontFamily: "var(--font-serif)" } }}
                   />
                   <Tooltip content={<ChartTooltip />} cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} />
-                  {/* Green normal baseline band */}
-                  <ReferenceArea
-                    y1={0}
-                    y2={stats.threshold}
-                    fill="var(--status-stable)"
-                    fillOpacity={0.06}
-                    stroke="none"
-                  />
                   {anomalyRegions.map((r, i) => (
                     <ReferenceArea
                       key={i}
@@ -338,11 +396,15 @@ function Index() {
                       strokeOpacity={0.3}
                     />
                   ))}
-                  <ReferenceLine
-                    y={stats.threshold}
+                  <Line
+                    type="monotone"
+                    dataKey="threshold"
+                    name="Dynamic Threshold"
                     stroke="var(--status-warning)"
                     strokeDasharray="6 4"
-                    label={{ value: "Threshold", position: "insideTopRight", fill: "var(--status-warning)", fontSize: 11, fontFamily: "var(--font-serif)" }}
+                    strokeWidth={1.5}
+                    dot={false}
+                    isAnimationActive={false}
                   />
                   <Line
                     type="monotone"
@@ -350,7 +412,22 @@ function Index() {
                     name="Reconstruction Score"
                     stroke="var(--foreground)"
                     strokeWidth={1.5}
-                    dot={false}
+                    dot={(props: { cx?: number; cy?: number; payload?: { colour?: string; severity?: string } }) => {
+                      const { cx, cy, payload } = props;
+                      if (cx == null || cy == null || !payload || payload.severity === "NORMAL") {
+                        return <g />;
+                      }
+                      return (
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={3.5}
+                          fill={payload.colour ?? "var(--status-anomaly)"}
+                          stroke="var(--background)"
+                          strokeWidth={1}
+                        />
+                      );
+                    }}
                     isAnimationActive={mode !== "live"}
                     animationDuration={600}
                   />
@@ -361,6 +438,14 @@ function Index() {
             )}
           </div>
         </section>
+
+        {/* Physics Insight panel */}
+        {hasData && (
+          <PhysicsInsightPanel latest={latestPhysics} material={material} />
+        )}
+
+        {/* Recent Windows table (unified across modes) */}
+        {hasData && <RecentWindowsTable rows={enriched} />}
 
         {/* Cluster Section */}
         <section className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
@@ -425,48 +510,6 @@ function Index() {
             </p>
           </div>
         </section>
-
-        {/* Live event log */}
-        <AnimatePresence>
-          {mode === "live" && points.length > 0 && (
-            <motion.section
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="mt-8 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]"
-            >
-              <div className="border-b border-border px-6 py-4 text-xs uppercase tracking-[0.22em] text-muted-foreground">
-                Recent Windows
-              </div>
-              <ul className="max-h-[260px] divide-y divide-border overflow-auto">
-                <AnimatePresence initial={false}>
-                  {points.slice(-12).reverse().map((p, i) => (
-                    <motion.li
-                      key={`${p.distance_mm}-${i}`}
-                      initial={{ opacity: 0, x: -12 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="flex items-center justify-between px-6 py-3 text-sm"
-                    >
-                      <span className="tabular-nums text-muted-foreground">{p.distance_mm.toFixed(2)} mm</span>
-                      <span className="tabular-nums">{p.score.toFixed(3)}</span>
-                      <span
-                        className="rounded-full px-3 py-1 text-xs ring-1"
-                        style={{
-                          color: CLASS_COLOR[p.class],
-                          backgroundColor: `color-mix(in oklab, ${CLASS_COLOR[p.class]} 14%, transparent)`,
-                          boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${CLASS_COLOR[p.class]} 30%, transparent)`,
-                        }}
-                      >
-                        {p.class}
-                      </span>
-                    </motion.li>
-                  ))}
-                </AnimatePresence>
-              </ul>
-            </motion.section>
-          )}
-        </AnimatePresence>
 
         <footer className="mt-12 text-center text-xs italic text-muted-foreground">
           MIG-WeldSight AI · Industrial Intelligence Platform
