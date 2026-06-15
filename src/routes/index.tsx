@@ -444,7 +444,16 @@ function Index() {
         )}
 
         {/* Recent Windows table (unified across modes) */}
-        {hasData && <RecentWindowsTable rows={enriched} />}
+        {hasData && (
+          <RecentWindowsTable
+            rows={enriched.map((p) => ({
+              distance_mm: p.distance_mm,
+              score: p.score,
+              threshold: p.thresholdSample.threshold,
+              physics: p.physics,
+            }))}
+          />
+        )}
 
         {/* Cluster Section */}
         <section className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
