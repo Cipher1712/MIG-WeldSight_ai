@@ -10,6 +10,10 @@ export type WindowPoint = {
   embedding_x: number;
   embedding_y: number;
   threshold: number;
+  // industrial fields (always populated; sim derives them, backend sends them verbatim)
+  voltage?: number;
+  arc_on?: boolean;
+  timestamp?: number;
 };
 
 export type StreamHandle = {
@@ -17,8 +21,12 @@ export type StreamHandle = {
   source: "websocket" | "simulated";
 };
 
-const DEFAULT_WS = "ws://localhost:8000/stream";
-export const REST_INFER_URL = "/api/infer";
+const DEFAULT_WS =
+  (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_WS_URL?: string } }).env?.VITE_WS_URL) ||
+  "ws://localhost:8000/ws/live";
+export const REST_INFER_URL =
+  ((typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL) || "") +
+  "/api/infer";
 
 export function connectStream(
   onMessage: (p: WindowPoint) => void,
