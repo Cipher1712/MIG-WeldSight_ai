@@ -20,6 +20,8 @@ export interface PhysicsResult {
   physics_text: string;
   colour: string;          // CSS var
   features: WindowFeatures;
+  possible_causes: string[];
+  recommended_actions: string[];
 }
 
 export const SEVERITY_COLOUR: Record<Severity, string> = {
@@ -57,6 +59,7 @@ export function classifyWindow(
   score: number,
   threshold: number,
   features: WindowFeatures,
+  ctx: { material?: string; thickness_mm?: number } = {},
 ): PhysicsResult {
   const ratio = score / Math.max(threshold, 1e-3);
 
@@ -64,22 +67,54 @@ export function classifyWindow(
   let physics_label = "stable_arc";
   let display_label = "Stable Arc";
   let physics_text = "Window within normal operating envelope. Mean voltage, deviation, and short-circuit cadence all nominal.";
+  let possible_causes: string[] = [];
+  let recommended_actions: string[] = [];
 
   if (ratio >= 1.8 || features.crest_factor > 1.35) {
     severity = "CRITICAL";
     physics_label = "short_circuit_abnormality";
     display_label = "Short-Circuit Abnormality";
     physics_text = `Crest factor ${features.crest_factor} and short-circuit count ${features.sc_count} exceed safe envelope. Wire feed or contact tip distance likely compromised.`;
+    possible_causes = [
+      "Excessive contact-tip-to-work distance (CTWD)",
+      "Wire feeder slippage or worn liner",
+      "Insufficient shielding gas flow",
+    ];
+    recommended_actions = [
+      "Reduce CTWD to within 10–15 mm",
+      "Inspect wire liner, drive rolls and tension",
+      "Verify gas flow ≥ 12 L/min and check for leaks",
+    ];
   } else if (ratio >= 1.25 || features.std_v > 1.6) {
     severity = "WARNING";
     physics_label = "arc_instability";
     display_label = "Arc Instability";
     physics_text = `Voltage deviation σ=${features.std_v} is high relative to mean. Indicates erratic arc length — check shielding gas flow and travel speed.`;
+    possible_causes = [
+      "Magnetic arc blow on " + (ctx.material ?? "workpiece"),
+      "Contaminated workpiece surface (mill scale, oil)",
+      "Inconsistent torch angle / travel speed",
+    ];
+    recommended_actions = [
+      "Verify grounding clamp placement",
+      "Clean workpiece with wire brush / solvent",
+      "Stabilise torch angle at 10–15° drag",
+    ];
   } else if (ratio >= 0.95) {
     severity = "INFO";
     physics_label = "transfer_change";
     display_label = "Transfer Mode Change";
     physics_text = `Score approaches threshold (${score.toFixed(2)} / ${threshold.toFixed(2)}). Metal-transfer regime may be shifting (spray ↔ globular).`;
+    possible_causes = [
+      "Voltage drift across the joint",
+      `Thickness change (set: ${ctx.thickness_mm ?? "?"} mm)`,
+      "Wire feed speed approaching transition band",
+    ];
+    recommended_actions = [
+      "Confirm voltage setpoint matches material/thickness",
+      "Check WFS calibration",
+      "Review joint preparation for thickness variation",
+    ];
   }
 
   return {
@@ -89,5 +124,7 @@ export function classifyWindow(
     physics_text,
     colour: SEVERITY_COLOUR[severity],
     features,
+    possible_causes,
+    recommended_actions,
   };
 }

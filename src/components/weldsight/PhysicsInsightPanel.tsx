@@ -1,23 +1,25 @@
 import { SEVERITY_COLOUR, type PhysicsResult } from "@/lib/physicsClassifier";
-import type { MaterialKey } from "@/lib/dynamicThreshold";
-import { MATERIAL_PRESETS } from "@/lib/dynamicThreshold";
+import { MATERIALS, type MaterialKey, type ThicknessMm } from "@/lib/profiles";
 
 export function PhysicsInsightPanel({
   latest,
   material,
+  thickness_mm,
 }: {
   latest: PhysicsResult | null;
   material: MaterialKey;
+  thickness_mm: ThicknessMm;
 }) {
   const isNormal = !latest || latest.severity === "NORMAL";
   const colour = latest ? latest.colour : SEVERITY_COLOUR.NORMAL;
+  const materialLabel = MATERIALS.find((m) => m.key === material)?.label ?? material;
 
   return (
     <section className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl">Physics Insight</h2>
         <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
-          Material · {MATERIAL_PRESETS[material].label}
+          {materialLabel} · {thickness_mm} mm
         </span>
       </div>
 
@@ -48,6 +50,13 @@ export function PhysicsInsightPanel({
             <FeatureCell label="sc_count" value={latest!.features.sc_count} />
             <FeatureCell label="crest_factor" value={latest!.features.crest_factor} />
           </div>
+
+          {(latest!.possible_causes.length > 0 || latest!.recommended_actions.length > 0) && (
+            <div className="grid grid-cols-1 gap-4 pt-2 md:grid-cols-2">
+              <CauseList title="Possible Causes" items={latest!.possible_causes} colour={colour} />
+              <CauseList title="Recommended Actions" items={latest!.recommended_actions} colour="var(--status-stable)" />
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -62,6 +71,22 @@ function FeatureCell({ label, value, unit }: { label: string; value: number; uni
         {typeof value === "number" ? value.toFixed(value % 1 === 0 ? 0 : 2) : value}
         {unit && <span className="ml-1 text-xs text-muted-foreground">{unit}</span>}
       </div>
+    </div>
+  );
+}
+
+function CauseList({ title, items, colour }: { title: string; items: string[]; colour: string }) {
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/30 px-4 py-3">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{title}</div>
+      <ul className="mt-2 space-y-1.5 text-sm">
+        {items.map((it, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="mt-2 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: colour }} />
+            <span className="text-muted-foreground">{it}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
