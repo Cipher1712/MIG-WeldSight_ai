@@ -107,6 +107,9 @@ export function simulateWindow(i: number): WindowPoint {
     embedding_x: x,
     embedding_y: y,
     threshold: 3.5,
+    voltage: +(22.5 + Math.sin(i * 0.4) * 1.6 + (isAnomaly ? rand() * 4 - 2 : rand() * 0.6 - 0.3)).toFixed(3),
+    arc_on: true,
+    timestamp: Date.now(),
   };
 }
 
@@ -161,6 +164,9 @@ export async function parseCsvToWindows(file: File): Promise<WindowPoint[]> {
       embedding_x: x,
       embedding_y: y,
       threshold: 3.5,
+      voltage: +(22.5 + Math.sin(i * 0.4) * 1.6 + (isAnomaly ? 2.4 : 0)).toFixed(3),
+      arc_on: true,
+      timestamp: Date.now() - (lines.length - i) * 50,
     });
   }
   return out;
