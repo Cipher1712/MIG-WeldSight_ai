@@ -392,7 +392,7 @@ function Dashboard() {
         </Tabs>
 
         <footer className="mt-12 border-t border-border pt-6 text-center text-xs italic text-muted-foreground">
-          MIG-WeldSight AI · Industrial Intelligence Platform · Backend: FastAPI / Railway · Hardware: ESP32 + ADS1115
+          MIG-WeldSight AI · Industrial Intelligence Platform · Backend: FastAPI / Render · Hardware: ESP32 + ADS1115
         </footer>
       </div>
     </div>

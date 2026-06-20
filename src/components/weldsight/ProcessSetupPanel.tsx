@@ -71,7 +71,7 @@ export function ProcessSetupPanel({
 
         <Field label="Last Updated">
           <div className="text-sm tabular-nums text-muted-foreground">
-            {profile ? new Date(profile.updated_at).toISOString().slice(0, 10) : "—"}
+            {profile ? formatProfileDate(profile.updated_at) : "—"}
           </div>
         </Field>
       </div>
@@ -104,4 +104,9 @@ function Mini({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-sm tabular-nums">{value}</div>
     </div>
   );
+}
+
+function formatProfileDate(value: number | string | undefined) {
+  const time = value == null ? Date.now() : new Date(value).getTime();
+  return new Date(Number.isFinite(time) ? time : Date.now()).toISOString().slice(0, 10);
 }

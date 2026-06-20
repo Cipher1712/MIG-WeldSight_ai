@@ -25,8 +25,10 @@ export interface ProcessSetup {
 }
 
 export interface BaselineProfile {
+  id?: number | string;
   material: MaterialKey;
   thickness_mm: ThicknessMm;
+  threshold?: number;
   learned_k: number;
   mean_score: number;
   std_score: number;
@@ -35,7 +37,7 @@ export interface BaselineProfile {
   rms_min: number;
   rms_max: number;
   trained_windows: number;
-  updated_at: number; // epoch ms
+  updated_at?: number | string; // normalized to epoch ms before display
 }
 
 export function profileKey(s: ProcessSetup): string {
