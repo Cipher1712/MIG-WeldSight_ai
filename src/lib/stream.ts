@@ -1,4 +1,4 @@
-import { WS_LIVE_URL, type BackendFrame } from "@/lib/apiClient";
+import type { BackendFrame } from "@/lib/apiClient";
 
 export type WindowPoint = {
   distance_mm?: number;
@@ -25,56 +25,6 @@ export type WindowPoint = {
   top_features?: BackendFrame["top_features"];
   voltage_features?: BackendFrame["voltage_features"];
 };
-
-export type StreamHandle = {
-  close: () => void;
-  source: "websocket";
-};
-
-export function connectStream(
-  onMessage: (p: WindowPoint) => void,
-  opts?: { url?: string; onStatus?: (s: "connecting" | "open" | "closed" | "error") => void },
-): StreamHandle {
-  const url = opts?.url ?? WS_LIVE_URL;
-  opts?.onStatus?.("connecting");
-  let ws: WebSocket | null = null;
-  let closed = false;
-
-  try {
-    ws = new WebSocket(url);
-    const connectTimer = window.setTimeout(() => {
-      if (ws && ws.readyState !== WebSocket.OPEN) {
-        try { ws.close(); } catch { /* noop */ }
-        if (!closed) opts?.onStatus?.("error");
-      }
-    }, 10_000);
-    ws.onopen = () => { window.clearTimeout(connectTimer); opts?.onStatus?.("open"); };
-    ws.onmessage = (ev) => {
-      try {
-        onMessage(mapBackendFrame(JSON.parse(ev.data) as BackendFrame));
-      } catch {
-        /* ignore malformed frames */
-      }
-    };
-    ws.onerror = () => opts?.onStatus?.("error");
-    ws.onclose = () => {
-      window.clearTimeout(connectTimer);
-      opts?.onStatus?.("closed");
-    };
-  } catch {
-    opts?.onStatus?.("error");
-  }
-
-  return {
-    source: "websocket",
-    close: () => {
-      closed = true;
-      if (ws && ws.readyState <= 1) {
-        try { ws.close(); } catch { /* noop */ }
-      }
-    },
-  };
-}
 
 export function mapBackendFrame(frame: BackendFrame, embedding?: number[]): WindowPoint {
   const severity = frame.severity;

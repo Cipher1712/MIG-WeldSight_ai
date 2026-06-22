@@ -1,13 +1,10 @@
 import type { BaselineProfile, MaterialKey, ProcessSetup } from "@/lib/profiles";
 
 const DEFAULT_API_BASE = "https://backend-mig-weldsight-ai.onrender.com";
-const DEFAULT_WS_LIVE_URL = "wss://backend-mig-weldsight-ai.onrender.com/ws/live";
 const API_BASE =
   ((typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || DEFAULT_API_BASE).replace(/\/+$/, "");
 
 export const API_URL = API_BASE;
-export const WS_LIVE_URL =
-  ((typeof import.meta !== "undefined" && import.meta.env?.VITE_WS_URL) || DEFAULT_WS_LIVE_URL).replace(/\/+$/, "");
 
 export type BackendSeverity = "NORMAL" | "INFO" | "WARNING" | "CRITICAL" | "POOR";
 
@@ -24,12 +21,16 @@ export interface BackendFeatures {
 export interface BackendFrame {
   timestamp?: number | string;
   voltage?: number;
+  arc_on?: boolean;
   distance_mm?: number;
   anomaly_score?: number;
+  anomaly_detected?: boolean;
   threshold?: number;
   anomaly_threshold?: number;
   quality_score?: number;
   quality_index?: number;
+  stability_score?: number;
+  prediction?: string;
   status?: string;
   diagnosis?: string;
   top_contributors?: Array<{ feature: string; importance?: number; method?: string }>;

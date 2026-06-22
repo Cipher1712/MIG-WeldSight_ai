@@ -16,20 +16,24 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
-  connectStream,
   dbscan2d,
   mapBackendFrame,
   parseCsvVoltage,
-  type StreamHandle,
   type WindowPoint,
 } from "@/lib/stream";
+import {
+  startTelemetryPolling,
+  type LatestMetrics,
+  type PollingStatus,
+  type TelemetryPollingHandle,
+} from "@/lib/telemetryPolling";
 import { physicsFromBackend, type PhysicsResult } from "@/lib/physicsClassifier";
 import type { QualityBand } from "@/lib/qualityIndex";
 import {
   type BaselineProfile,
   type ProcessSetup,
 } from "@/lib/profiles";
-import { normalizeProfile, weldSightApi, WS_LIVE_URL } from "@/lib/apiClient";
+import { normalizeProfile, weldSightApi } from "@/lib/apiClient";
 
 import { ProcessSetupPanel } from "@/components/weldsight/ProcessSetupPanel";
 import { RawVoltageChart } from "@/components/weldsight/RawVoltageChart";
@@ -47,7 +51,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Production-grade MIG welding monitoring: live ESP32 streams, material- and thickness-aware physics diagnosis, and traceable quality records.",
+          "Production-grade MIG welding monitoring: live ESP32 telemetry, material- and thickness-aware physics diagnosis, and traceable quality records.",
       },
       { property: "og:title", content: "MIG-WeldSight AI" },
       { property: "og:description", content: "Industrial MIG welding monitoring platform." },
@@ -107,8 +111,10 @@ function Dashboard() {
   const [points, setPoints] = useState<WindowPoint[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<"idle" | "connecting" | "open" | "error" | "closed">("idle");
-  const streamRef = useRef<StreamHandle | null>(null);
+  const [pollingStatus, setPollingStatus] = useState<PollingStatus>("No Data");
+  const [latestMetrics, setLatestMetrics] = useState<LatestMetrics | null>(null);
+  const pollingRef = useRef<TelemetryPollingHandle | null>(null);
+  const lastLiveTimestampRef = useRef<number | string | undefined>(undefined);
 
   // history (traceability)
   const [history, setHistory] = useState<HistoryEvent[]>([]);
@@ -133,29 +139,56 @@ function Dashboard() {
   }, [persistHistory, setup.material, setup.thickness_mm]);
   useEffect(() => refreshHistory(), [refreshHistory]);
 
-  // live stream lifecycle (only when on live tab)
+  // live polling lifecycle (only when on live tab)
   useEffect(() => {
     if (tab !== "live") {
-      streamRef.current?.close();
-      streamRef.current = null;
-      setStreamStatus("idle");
+      pollingRef.current?.close();
+      pollingRef.current = null;
+      setPollingStatus("No Data");
+      setLatestMetrics(null);
       return;
     }
     setPoints([]);
-    streamRef.current = connectStream(
-      (p) => {
+    setLatestMetrics(null);
+    lastLiveTimestampRef.current = undefined;
+    pollingRef.current = startTelemetryPolling({
+      onTelemetry: (telemetry) => {
+        const frame = telemetry?.latest_inference;
+        if (!frame) return;
+        const frameTimestamp = frame.timestamp ?? telemetry.timestamp;
+        if (frameTimestamp != null && frameTimestamp === lastLiveTimestampRef.current) return;
+        lastLiveTimestampRef.current = frameTimestamp;
         setPoints((prev) => {
-          const next = [...prev, p];
+          const next = [...prev, mapBackendFrame({
+            ...frame,
+            timestamp: frameTimestamp,
+            distance_mm: frame.distance_mm ?? telemetry.distance_mm,
+            voltage: frame.voltage ?? telemetry.voltage?.at(-1),
+          })];
           return next.length > 500 ? next.slice(next.length - 500) : next;
         });
       },
-      { onStatus: setStreamStatus },
-    );
+      onMetrics: setLatestMetrics,
+      onEvents: (events) => {
+        if (!events.length) return;
+        persistHistory(
+          events.map((e) => ({
+            timestamp: eventTimestamp(e.timestamp, e.ts),
+            material: e.material ?? setup.material,
+            thickness_mm: Number(e.thickness_mm ?? setup.thickness_mm),
+            severity: (e.severity === "POOR" ? "WARNING" : e.severity ?? "NORMAL") as HistoryEvent["severity"],
+            quality: numberOrUndefined(e.quality_index ?? e.quality_score),
+            score: numberOrUndefined(e.anomaly_score),
+          })),
+        );
+      },
+      onStatus: setPollingStatus,
+    });
     return () => {
-      streamRef.current?.close();
-      streamRef.current = null;
+      pollingRef.current?.close();
+      pollingRef.current = null;
     };
-  }, [tab]);
+  }, [persistHistory, setup.material, setup.thickness_mm, tab]);
 
   const onChooseFile = (file: File | null) => {
     if (!file) return;
@@ -302,7 +335,7 @@ function Dashboard() {
                 }}
               />
               <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-                MIG-WeldSight AI Â· Industrial Monitoring Â· {tabLabel(tab, streamStatus)}
+                MIG-WeldSight AI Â· Industrial Monitoring Â· {tabLabel(tab, pollingStatus)}
               </span>
             </div>
             <button
@@ -373,21 +406,20 @@ function Dashboard() {
           <TabsContent value="live" className="mt-6 space-y-6">
             <section className="rounded-2xl border border-border bg-card p-8 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl">Live Monitoring Â· ESP32 Stream</h2>
-                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{liveBanner(streamStatus, hasData)}</span>
+                <h2 className="text-2xl">Live Monitoring Â· ESP32 Telemetry</h2>
+                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{liveBanner(pollingStatus, hasData, latestMetrics)}</span>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
-                Hardware streams raw voltage + distance to the backend, which performs feature extraction,
+                Hardware sends raw voltage + distance to the backend, which performs feature extraction,
                 dynamic thresholding (learned <code>k</code>), physics classification, and PCA/DBSCAN.
-                The frontend renders the resulting frames.
+                The frontend polls the resulting frames.
               </p>
             </section>
 
             {hasData ? <DashboardBody /> : (
               <div className="rounded-2xl border border-dashed border-border/70 bg-card p-12 text-center text-sm italic text-muted-foreground">
                 <div>No live telemetry available</div>
-                <div className="mt-1">Waiting for ESP32 connection...</div>
-                <div className="mt-3 text-xs not-italic">WebSocket: <code>{WS_LIVE_URL}</code></div>
+                <div className="mt-1">Waiting for telemetry...</div>
               </div>
             )}
           </TabsContent>
@@ -541,13 +573,9 @@ function eventTimestamp(timestamp?: number | string, ts?: string) {
   if (ts) return new Date(ts).getTime();
   return Date.now();
 }
-function liveBanner(status: string, hasData: boolean) {
-  const backend =
-    status === "open" ? "Backend: Connected" :
-    status === "connecting" ? "Backend: Connecting" :
-    status === "idle" ? "Backend: Idle" :
-    "Backend: Disconnected";
-  return `${backend} - Stream: ${hasData ? "Active" : "Inactive"} - ESP32: ${hasData ? "Connected" : "Disconnected"}`;
+function liveBanner(status: PollingStatus, hasData: boolean, metrics: LatestMetrics | null) {
+  const health = metrics?.model_ready === false ? "Model: Fallback" : "Model: Ready";
+  return `Backend: ${status} - Telemetry: ${hasData ? "Active" : "Inactive"} - ${health}`;
 }
 
 function formatMetric(value?: number, fractionDigits = 2) {
