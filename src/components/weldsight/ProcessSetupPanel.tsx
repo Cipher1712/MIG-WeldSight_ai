@@ -80,8 +80,8 @@ export function ProcessSetupPanel({
         <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-border bg-background/30 p-4 md:grid-cols-4">
           <Mini label="learned_k" value={profile.learned_k.toFixed(2)} />
           <Mini label="μ score" value={profile.mean_score.toFixed(2)} />
-          <Mini label="V envelope" value={`${profile.voltage_min.toFixed(1)}–${profile.voltage_max.toFixed(1)} V`} />
-          <Mini label="RMS envelope" value={`${profile.rms_min.toFixed(1)}–${profile.rms_max.toFixed(1)} V`} />
+          <Mini label="V envelope" value={formatRange(profile.voltage_min, profile.voltage_max, "V")} />
+          <Mini label="RMS envelope" value={formatRange(profile.rms_min, profile.rms_max, "V")} />
         </div>
       )}
     </section>
@@ -107,6 +107,12 @@ function Mini({ label, value }: { label: string; value: string }) {
 }
 
 function formatProfileDate(value: number | string | undefined) {
-  const time = value == null ? Date.now() : new Date(value).getTime();
-  return new Date(Number.isFinite(time) ? time : Date.now()).toISOString().slice(0, 10);
+  if (value == null) return "--";
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? new Date(time).toISOString().slice(0, 10) : "--";
+}
+
+function formatRange(min?: number, max?: number, unit?: string) {
+  if (typeof min !== "number" || typeof max !== "number") return "--";
+  return `${min.toFixed(1)}-${max.toFixed(1)}${unit ? ` ${unit}` : ""}`;
 }

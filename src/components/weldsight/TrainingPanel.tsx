@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  saveProfile,
   type BaselineProfile,
   type ProcessSetup,
 } from "@/lib/profiles";
-import { parseCsvToWindows } from "@/lib/stream";
+import { normalizeProfile, weldSightApi } from "@/lib/apiClient";
+import { parseCsvVoltage } from "@/lib/stream";
 
 export function TrainingPanel({
   setup,
@@ -18,50 +18,37 @@ export function TrainingPanel({
   const [training, setTraining] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<BaselineProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const onPick = (list: FileList | null) => {
     if (!list) return;
     setFiles(Array.from(list));
     setResult(null);
+    setError(null);
   };
 
   const train = async () => {
     if (!files.length) return;
     setTraining(true);
     setProgress(0);
-    const allScores: number[] = [];
-    const allVoltage: number[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const wins = await parseCsvToWindows(files[i]);
-      wins.forEach((w) => {
-        allScores.push(w.score);
-        if (typeof w.voltage === "number") allVoltage.push(w.voltage);
-      });
-      setProgress(Math.round(((i + 1) / files.length) * 100));
-      await new Promise((r) => setTimeout(r, 120));
+    setError(null);
+    try {
+      const good_welds = [];
+      for (let i = 0; i < files.length; i++) {
+        const parsed = await parseCsvVoltage(files[i]);
+        if (parsed.voltage.length) good_welds.push({ voltage: parsed.voltage });
+        setProgress(Math.round(((i + 1) / files.length) * 80));
+      }
+      if (!good_welds.length) throw new Error("No voltage samples found in selected CSV files.");
+      const profile = normalizeProfile(await weldSightApi.train({ ...setup, good_welds }));
+      setProgress(100);
+      setResult(profile);
+      onProfileLearned(profile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Training failed");
+    } finally {
+      setTraining(false);
     }
-    const mean = avg(allScores);
-    const std = stdev(allScores, mean);
-    const vMin = Math.min(...allVoltage, 0);
-    const vMax = Math.max(...allVoltage, 0);
-    const rms = Math.sqrt(avg(allVoltage.map((v) => v * v)));
-    const profile: BaselineProfile = {
-      material: setup.material,
-      thickness_mm: setup.thickness_mm,
-      learned_k: +clamp(2.4 + std * 0.6, 2.0, 4.5).toFixed(2),
-      mean_score: +mean.toFixed(3),
-      std_score: +std.toFixed(3),
-      voltage_min: +vMin.toFixed(2),
-      voltage_max: +vMax.toFixed(2),
-      rms_min: +(rms * 0.9).toFixed(2),
-      rms_max: +(rms * 1.1).toFixed(2),
-      trained_windows: allScores.length,
-      updated_at: Date.now(),
-    };
-    saveProfile(profile);
-    setResult(profile);
-    onProfileLearned(profile);
-    setTraining(false);
   };
 
   return (
@@ -103,6 +90,12 @@ export function TrainingPanel({
             />
           </div>
         )}
+
+        {error && (
+          <div className="mt-5 rounded-xl border border-border bg-background/40 px-4 py-3 text-sm italic text-muted-foreground">
+            {error}
+          </div>
+        )}
       </div>
 
       {result && (
@@ -120,15 +113,4 @@ export function TrainingPanel({
       )}
     </section>
   );
-}
-
-function avg(xs: number[]) {
-  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
-}
-function stdev(xs: number[], mean: number) {
-  if (xs.length < 2) return 0;
-  return Math.sqrt(xs.reduce((s, x) => s + (x - mean) ** 2, 0) / (xs.length - 1));
-}
-function clamp(x: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, x));
 }

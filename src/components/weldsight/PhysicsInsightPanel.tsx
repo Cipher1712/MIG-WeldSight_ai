@@ -10,7 +10,7 @@ export function PhysicsInsightPanel({
   material: MaterialKey;
   thickness_mm: ThicknessMm;
 }) {
-  const isNormal = !latest || latest.severity === "NORMAL";
+  const isNormal = latest?.severity === "NORMAL";
   const colour = latest ? latest.colour : SEVERITY_COLOUR.NORMAL;
   const materialLabel = MATERIALS.find((m) => m.key === material)?.label ?? material;
 
@@ -23,7 +23,11 @@ export function PhysicsInsightPanel({
         </span>
       </div>
 
-      {isNormal ? (
+      {!latest ? (
+        <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-background/40 px-4 py-4">
+          <span className="text-sm italic text-muted-foreground">No live physics data available.</span>
+        </div>
+      ) : isNormal ? (
         <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-background/40 px-4 py-4">
           <span className="h-2.5 w-2.5 rounded-full" style={{ background: SEVERITY_COLOUR.NORMAL, boxShadow: `0 0 12px ${SEVERITY_COLOUR.NORMAL}` }} />
           <span className="text-sm italic text-muted-foreground">
@@ -63,13 +67,13 @@ export function PhysicsInsightPanel({
   );
 }
 
-function FeatureCell({ label, value, unit }: { label: string; value: number; unit?: string }) {
+function FeatureCell({ label, value, unit }: { label: string; value?: number; unit?: string }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/30 px-4 py-3">
       <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
       <div className="mt-1 text-lg tabular-nums">
-        {typeof value === "number" ? value.toFixed(value % 1 === 0 ? 0 : 2) : value}
-        {unit && <span className="ml-1 text-xs text-muted-foreground">{unit}</span>}
+        {typeof value === "number" ? value.toFixed(value % 1 === 0 ? 0 : 2) : "--"}
+        {unit && typeof value === "number" && <span className="ml-1 text-xs text-muted-foreground">{unit}</span>}
       </div>
     </div>
   );

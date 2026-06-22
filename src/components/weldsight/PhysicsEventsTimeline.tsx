@@ -1,14 +1,17 @@
 import type { PhysicsResult } from "@/lib/physicsClassifier";
 
 export interface TimelineEvent {
-  distance_mm: number;
-  physics: PhysicsResult;
+  distance_mm?: number;
+  physics: PhysicsResult | null;
 }
 
 export function PhysicsEventsTimeline({ events }: { events: TimelineEvent[] }) {
-  const significant = events.filter((e) => e.physics.severity !== "NORMAL");
-  const max = events.length ? events[events.length - 1].distance_mm : 1;
-  const min = events.length ? events[0].distance_mm : 0;
+  const validEvents = events.filter(
+    (e): e is { distance_mm: number; physics: PhysicsResult | null } => typeof e.distance_mm === "number",
+  );
+  const significant = validEvents.filter((e) => e.physics && e.physics.severity !== "NORMAL");
+  const max = validEvents.length ? validEvents[validEvents.length - 1].distance_mm : 1;
+  const min = validEvents.length ? validEvents[0].distance_mm : 0;
   const span = Math.max(max - min, 1);
 
   return (
@@ -23,6 +26,7 @@ export function PhysicsEventsTimeline({ events }: { events: TimelineEvent[] }) {
         <div className="absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-border" />
         {significant.map((e, i) => {
           const left = ((e.distance_mm - min) / span) * 100;
+          const physics = e.physics!;
           return (
             <div
               key={i}
@@ -31,17 +35,17 @@ export function PhysicsEventsTimeline({ events }: { events: TimelineEvent[] }) {
             >
               <span
                 className="block h-3 w-3 rounded-full"
-                style={{ background: e.physics.colour, boxShadow: `0 0 10px ${e.physics.colour}` }}
+                style={{ background: physics.colour, boxShadow: `0 0 10px ${physics.colour}` }}
               />
               <div className="pointer-events-none absolute left-1/2 top-5 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground group-hover:block">
-                <span style={{ color: e.physics.colour }}>{e.physics.display_label}</span> · {e.distance_mm.toFixed(1)} mm
+                <span style={{ color: physics.colour }}>{physics.display_label}</span> - {e.distance_mm.toFixed(1)} mm
               </div>
             </div>
           );
         })}
         {significant.length === 0 && (
           <div className="flex h-full items-center justify-center text-xs italic text-muted-foreground">
-            No anomaly events on this trace.
+            No live anomaly events on this trace.
           </div>
         )}
       </div>

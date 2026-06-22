@@ -1,183 +1,132 @@
-// WebSocket stream service for live MIG voltage windows, with simulated
-// fallback when no backend is reachable. The same WindowPoint shape is
-// produced from CSV uploads so the UI rendering layer is mode-agnostic.
+import { WS_LIVE_URL, type BackendFrame } from "@/lib/apiClient";
 
 export type WindowPoint = {
-  distance_mm: number;
-  score: number;
-  status: "Stable" | "Anomaly";
-  class: "Normal" | "Arc Instability" | "Transfer Change" | "Short Circuit Abnormality";
-  embedding_x: number;
-  embedding_y: number;
-  threshold: number;
-  // industrial fields (always populated; sim derives them, backend sends them verbatim)
+  distance_mm?: number;
+  score?: number;
+  status?: "Stable" | "Anomaly";
+  class?: "Normal" | "Arc Instability" | "Transfer Change" | "Short Circuit Abnormality";
+  embedding_x?: number;
+  embedding_y?: number;
+  threshold?: number;
   voltage?: number;
   arc_on?: boolean;
   timestamp?: number;
+  quality_index?: number;
+  severity?: string;
+  physics_label?: string;
+  ml_label?: string;
+  confidence?: number;
+  diagnosis?: string;
+  recommendation?: string;
+  display_label?: string;
+  possible_causes?: string[];
+  recommended_actions?: string[];
+  top_contributors?: BackendFrame["top_contributors"];
+  top_features?: BackendFrame["top_features"];
+  voltage_features?: BackendFrame["voltage_features"];
 };
 
 export type StreamHandle = {
   close: () => void;
-  source: "websocket" | "simulated";
+  source: "websocket";
 };
-
-const DEFAULT_WS =
-  (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_WS_URL?: string } }).env?.VITE_WS_URL) ||
-  "ws://localhost:8000/ws/live";
-export const REST_INFER_URL =
-  ((typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL) || "") +
-  "/api/infer";
 
 export function connectStream(
   onMessage: (p: WindowPoint) => void,
-  opts?: { url?: string; onStatus?: (s: "connecting" | "open" | "closed" | "simulated") => void },
+  opts?: { url?: string; onStatus?: (s: "connecting" | "open" | "closed" | "error") => void },
 ): StreamHandle {
-  const url = opts?.url ?? DEFAULT_WS;
+  const url = opts?.url ?? WS_LIVE_URL;
   opts?.onStatus?.("connecting");
   let ws: WebSocket | null = null;
-  let simTimer: ReturnType<typeof setInterval> | null = null;
   let closed = false;
-
-  const startSimulation = () => {
-    opts?.onStatus?.("simulated");
-    let i = 0;
-    simTimer = setInterval(() => {
-      if (closed) return;
-      onMessage(simulateWindow(i++));
-    }, 600);
-  };
 
   try {
     ws = new WebSocket(url);
-    const fallbackTimer = setTimeout(() => {
+    const connectTimer = window.setTimeout(() => {
       if (ws && ws.readyState !== WebSocket.OPEN) {
         try { ws.close(); } catch { /* noop */ }
-        if (!closed) startSimulation();
+        if (!closed) opts?.onStatus?.("error");
       }
-    }, 1200);
-    ws.onopen = () => { clearTimeout(fallbackTimer); opts?.onStatus?.("open"); };
+    }, 10_000);
+    ws.onopen = () => { window.clearTimeout(connectTimer); opts?.onStatus?.("open"); };
     ws.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data) as WindowPoint;
-        onMessage(data);
+        onMessage(mapBackendFrame(JSON.parse(ev.data) as BackendFrame));
       } catch {
         /* ignore malformed frames */
       }
     };
-    ws.onerror = () => { /* fallbackTimer handles closure */ };
+    ws.onerror = () => opts?.onStatus?.("error");
     ws.onclose = () => {
+      window.clearTimeout(connectTimer);
       opts?.onStatus?.("closed");
-      if (!closed && !simTimer) startSimulation();
     };
   } catch {
-    startSimulation();
+    opts?.onStatus?.("error");
   }
 
   return {
     source: "websocket",
     close: () => {
       closed = true;
-      if (simTimer) clearInterval(simTimer);
-      if (ws && ws.readyState <= 1) { try { ws.close(); } catch { /* noop */ } }
+      if (ws && ws.readyState <= 1) {
+        try { ws.close(); } catch { /* noop */ }
+      }
     },
   };
 }
 
-// Deterministic simulator — generates realistic-looking windows with rare anomalies.
-let simState = 1337;
-function rand() {
-  simState = (simState * 9301 + 49297) % 233280;
-  return simState / 233280;
-}
-export function simulateWindow(i: number): WindowPoint {
-  const isAnomaly = rand() < 0.12;
-  const cls = isAnomaly
-    ? (["Arc Instability", "Transfer Change", "Short Circuit Abnormality"] as const)[
-        Math.floor(rand() * 3)
-      ]
-    : "Normal";
-  const score = isAnomaly ? +(4 + rand() * 8).toFixed(3) : +(0.2 + rand() * 1.6).toFixed(3);
-  const distance_mm = +(i * 1.8 + rand() * 0.6).toFixed(2);
-  const { x, y } = embedFor(cls, rand);
+export function mapBackendFrame(frame: BackendFrame, embedding?: number[]): WindowPoint {
+  const severity = frame.severity;
+  const display = frame.display_label ?? labelFromPhysics(frame.physics_label);
   return {
-    distance_mm,
-    score,
-    status: isAnomaly ? "Anomaly" : "Stable",
-    class: cls,
-    embedding_x: x,
-    embedding_y: y,
-    threshold: 3.5,
-    voltage: +(22.5 + Math.sin(i * 0.4) * 1.6 + (isAnomaly ? rand() * 4 - 2 : rand() * 0.6 - 0.3)).toFixed(3),
-    arc_on: true,
-    timestamp: Date.now(),
+    distance_mm: numberOrUndefined(frame.distance_mm),
+    score: numberOrUndefined(frame.anomaly_score),
+    status: severity ? (severity === "NORMAL" ? "Stable" : "Anomaly") : undefined,
+    class: display ? classFromLabel(display, frame.physics_label) : undefined,
+    embedding_x: numberOrUndefined(embedding?.[0] ?? frame.embedding_x),
+    embedding_y: numberOrUndefined(embedding?.[1] ?? frame.embedding_y),
+    threshold: numberOrUndefined(frame.threshold ?? frame.anomaly_threshold),
+    voltage: numberOrUndefined(frame.voltage ?? frame.voltage_features?.mean_v),
+    timestamp: normalizeTimestamp(frame.timestamp),
+    quality_index: numberOrUndefined(frame.quality_index ?? frame.quality_score),
+    severity,
+    physics_label: frame.physics_label,
+    ml_label: frame.ml_label,
+    confidence: frame.confidence,
+    diagnosis: frame.diagnosis,
+    recommendation: frame.recommendation,
+    display_label: display,
+    possible_causes: frame.possible_causes,
+    recommended_actions: frame.recommended_actions,
+    top_contributors: frame.top_contributors,
+    top_features: frame.top_features,
+    voltage_features: frame.voltage_features,
   };
 }
 
-function embedFor(cls: WindowPoint["class"], r: () => number) {
-  // Pseudo-PCA: normal welding lives in a dense blob; each anomaly class drifts away.
-  const blob = (cx: number, cy: number, spread: number) => ({
-    x: +(cx + (r() - 0.5) * spread).toFixed(3),
-    y: +(cy + (r() - 0.5) * spread).toFixed(3),
-  });
-  switch (cls) {
-    case "Normal":
-      return blob(0, 0, 0.9);
-    case "Arc Instability":
-      return blob(2.6 + r() * 0.6, 1.4 + r() * 0.6, 0.6);
-    case "Transfer Change":
-      return blob(-2.4 - r() * 0.6, 1.8 + r() * 0.6, 0.6);
-    case "Short Circuit Abnormality":
-      return blob(0.2 + r() * 0.6, -2.6 - r() * 0.6, 0.6);
-  }
-}
-
-// Convert a CSV file into a deterministic stream of WindowPoints.
-// Expected columns (case-insensitive): distance, score. Other columns optional.
-export async function parseCsvToWindows(file: File): Promise<WindowPoint[]> {
+export async function parseCsvVoltage(file: File): Promise<{ voltage: number[]; distance?: number[] }> {
   const text = await file.text();
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
-  if (!lines.length) return [];
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length);
+  if (!lines.length) return { voltage: [] };
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const voltageIdx = header.findIndex((h) =>
+    ["migvoltage", "mig voltage", "voltage", "arcvoltage", "voltage_v", "migvolatge"].some((name) =>
+      h.replace(/[_\s]/g, "").includes(name.replace(/[_\s]/g, "")),
+    ),
+  );
   const distIdx = header.findIndex((h) => h.includes("distance"));
-  const scoreIdx = header.findIndex((h) => h.includes("score") || h.includes("voltage"));
-  const out: WindowPoint[] = [];
+  const voltage: number[] = [];
+  const distance: number[] = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(",");
-    const distance_mm = distIdx >= 0 ? Number(cols[distIdx]) : i * 1.8;
-    const score = scoreIdx >= 0 ? Number(cols[scoreIdx]) : Math.abs(Math.sin(i)) * 5;
-    if (!Number.isFinite(distance_mm) || !Number.isFinite(score)) continue;
-    const isAnomaly = score >= 3.5;
-    const cls: WindowPoint["class"] = !isAnomaly
-      ? "Normal"
-      : score > 7
-        ? "Short Circuit Abnormality"
-        : score > 5
-          ? "Arc Instability"
-          : "Transfer Change";
-    const seededR = seededRandom(i);
-    const { x, y } = embedFor(cls, seededR);
-    out.push({
-      distance_mm: +distance_mm.toFixed(2),
-      score: +score.toFixed(3),
-      status: isAnomaly ? "Anomaly" : "Stable",
-      class: cls,
-      embedding_x: x,
-      embedding_y: y,
-      threshold: 3.5,
-      voltage: +(22.5 + Math.sin(i * 0.4) * 1.6 + (isAnomaly ? 2.4 : 0)).toFixed(3),
-      arc_on: true,
-      timestamp: Date.now() - (lines.length - i) * 50,
-    });
+    const v = Number(cols[voltageIdx]);
+    const d = distIdx >= 0 ? Number(cols[distIdx]) : undefined;
+    if (!Number.isFinite(v)) continue;
+    voltage.push(v);
+    if (typeof d === "number" && Number.isFinite(d)) distance.push(d);
   }
-  return out;
-}
-
-function seededRandom(seed: number) {
-  let s = seed * 9301 + 49297;
-  return () => {
-    s = (s * 9301 + 49297) % 233280;
-    return s / 233280;
-  };
+  return { voltage, distance: distance.length === voltage.length ? distance : undefined };
 }
 
 // DBSCAN on 2D embedding (NOT distance). label -1 = anomaly/outlier.
@@ -208,4 +157,31 @@ export function dbscan2d(points: { embedding_x: number; embedding_y: number }[],
     c++;
   }
   return { labels, clusters: c, noise: labels.filter((l) => l === -1).length };
+}
+
+function normalizeTimestamp(ts: BackendFrame["timestamp"]) {
+  if (typeof ts === "number") return ts < 10_000_000_000 ? ts * 1000 : ts;
+  if (typeof ts === "string") return new Date(ts).getTime();
+  return undefined;
+}
+
+function labelFromPhysics(label?: string) {
+  if (!label) return undefined;
+  return label
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function classFromLabel(display: string, label?: string): WindowPoint["class"] {
+  const text = `${display} ${label ?? ""}`.toLowerCase();
+  if (text.includes("short")) return "Short Circuit Abnormality";
+  if (text.includes("transfer")) return "Transfer Change";
+  if (text.includes("instability") || text.includes("unstable") || text.includes("arc")) return "Arc Instability";
+  return "Normal";
 }

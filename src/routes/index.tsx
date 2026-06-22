@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
@@ -18,19 +18,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   connectStream,
   dbscan2d,
-  parseCsvToWindows,
-  simulateWindow,
+  mapBackendFrame,
+  parseCsvVoltage,
   type StreamHandle,
   type WindowPoint,
 } from "@/lib/stream";
-import { classifyWindow, deriveFeatures, type PhysicsResult } from "@/lib/physicsClassifier";
-import { computeQualityIndex } from "@/lib/qualityIndex";
+import { physicsFromBackend, type PhysicsResult } from "@/lib/physicsClassifier";
+import type { QualityBand } from "@/lib/qualityIndex";
 import {
-  getProfile,
-  saveProfile,
   type BaselineProfile,
   type ProcessSetup,
 } from "@/lib/profiles";
+import { normalizeProfile, weldSightApi, WS_LIVE_URL } from "@/lib/apiClient";
 
 import { ProcessSetupPanel } from "@/components/weldsight/ProcessSetupPanel";
 import { RawVoltageChart } from "@/components/weldsight/RawVoltageChart";
@@ -44,7 +43,7 @@ import { HistoricalAnalytics, type HistoryEvent } from "@/components/weldsight/H
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "MIG-WeldSight AI · Industrial Welding Monitoring" },
+      { title: "MIG-WeldSight AI Â· Industrial Welding Monitoring" },
       {
         name: "description",
         content:
@@ -58,15 +57,12 @@ export const Route = createFileRoute("/")({
 });
 
 type Tab = "upload" | "live" | "training" | "history";
-const HISTORY_KEY = "weldsight.history.v1";
 const ROLLING = 100;
-const DEFAULT_FLOOR = 3.5;
 
 type EnrichedPoint = WindowPoint & {
-  physics: PhysicsResult;
-  thresholdValue: number;
-  warmup: boolean;
-  quality: number;
+  physics: PhysicsResult | null;
+  thresholdValue?: number;
+  quality?: number;
 };
 
 function Dashboard() {
@@ -83,8 +79,25 @@ function Dashboard() {
   // process setup + profile lookup
   const [setup, setSetup] = useState<ProcessSetup>({ material: "mild_steel", thickness_mm: 6 });
   const [profile, setProfile] = useState<BaselineProfile | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   useEffect(() => {
-    setProfile(getProfile(setup));
+    let alive = true;
+    weldSightApi.profiles()
+      .then((items) => {
+        if (!alive) return;
+        const normalized = items.map(normalizeProfile);
+        setProfile(
+          normalized.find((p) => p.material === setup.material && Number(p.thickness_mm) === Number(setup.thickness_mm)) ?? null,
+        );
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setApiError(err instanceof Error ? err.message : "Unable to load profiles");
+        setProfile(null);
+      });
+    return () => {
+      alive = false;
+    };
   }, [setup]);
 
   // tab
@@ -94,22 +107,31 @@ function Dashboard() {
   const [points, setPoints] = useState<WindowPoint[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<"idle" | "connecting" | "open" | "simulated" | "closed">("idle");
+  const [streamStatus, setStreamStatus] = useState<"idle" | "connecting" | "open" | "error" | "closed">("idle");
   const streamRef = useRef<StreamHandle | null>(null);
 
   // history (traceability)
-  const [history, setHistory] = useState<HistoryEvent[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [history, setHistory] = useState<HistoryEvent[]>([]);
   const persistHistory = useCallback((next: HistoryEvent[]) => {
     setHistory(next);
-    if (typeof window !== "undefined") localStorage.setItem(HISTORY_KEY, JSON.stringify(next.slice(-1000)));
   }, []);
+  const refreshHistory = useCallback(() => {
+    weldSightApi.events(1000)
+      .then((events) =>
+        persistHistory(
+          events.map((e) => ({
+            timestamp: eventTimestamp(e.timestamp, e.ts),
+            material: e.material ?? setup.material,
+            thickness_mm: Number(e.thickness_mm ?? setup.thickness_mm),
+            severity: (e.severity === "POOR" ? "WARNING" : e.severity ?? "NORMAL") as HistoryEvent["severity"],
+            quality: numberOrUndefined(e.quality_index ?? e.quality_score),
+            score: numberOrUndefined(e.anomaly_score),
+          })),
+        ),
+      )
+      .catch((err) => setApiError(err instanceof Error ? err.message : "Unable to load events"));
+  }, [persistHistory, setup.material, setup.thickness_mm]);
+  useEffect(() => refreshHistory(), [refreshHistory]);
 
   // live stream lifecycle (only when on live tab)
   useEffect(() => {
@@ -143,57 +165,32 @@ function Dashboard() {
   const runUploadInference = useCallback(async () => {
     setLoading(true);
     setPoints([]);
-    const input = document.querySelector<HTMLInputElement>("input[type=file][data-csv]");
-    const file = input?.files?.[0];
-    let parsed: WindowPoint[] = [];
-    if (file) parsed = await parseCsvToWindows(file);
-    if (!parsed.length) parsed = Array.from({ length: 96 }, (_, i) => simulateWindow(i));
-    await new Promise((r) => setTimeout(r, 700));
-    setPoints(parsed);
-    setLoading(false);
-  }, []);
+    setApiError(null);
+    try {
+      const input = document.querySelector<HTMLInputElement>("input[type=file][data-csv]");
+      const file = input?.files?.[0];
+      if (!file) throw new Error("Select a CSV file before running analysis.");
+      const parsed = await parseCsvVoltage(file);
+      if (!parsed.voltage.length) throw new Error("No voltage samples found in the selected CSV.");
+      const result = await weldSightApi.infer({ ...setup, voltage: parsed.voltage, distance: parsed.distance });
+      setPoints(result.frames.map((frame, i) => mapBackendFrame(frame, result.cluster?.embeddings?.[i])));
+      refreshHistory();
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Upload analysis failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [refreshHistory, setup]);
 
   // enrich points with threshold + physics + quality (no operator-tunable k)
   const enriched = useMemo<EnrichedPoint[]>(() => {
-    const k = profile?.learned_k ?? 3.0;
-    const warmupN = profile ? 0 : 30;
-    const floor = profile ? Math.max(profile.mean_score + 1.5 * profile.std_score, DEFAULT_FLOOR * 0.85) : DEFAULT_FLOOR;
-    const ewmaA = 0.15;
-    const varA = 0.08;
-    let mean = 0;
-    let variance = 0;
-    let n = 0;
-    let prevScore = 0;
-    return points.map((p, i) => {
-      n += 1;
-      if (n === 1) {
-        mean = p.score;
-        variance = 0;
-      } else {
-        const dev = p.score - mean;
-        mean = ewmaA * p.score + (1 - ewmaA) * mean;
-        variance = (1 - varA) * variance + varA * dev * dev;
-      }
-      const sigma = Math.sqrt(variance);
-      const warmup = n < warmupN;
-      const adaptive = mean + k * sigma;
-      const thresholdValue = +(warmup ? floor : Math.max(adaptive, floor * 0.85)).toFixed(3);
-      const features = deriveFeatures(p.score, prevScore, i);
-      const physics = classifyWindow(p.score, thresholdValue, features, {
-        material: setup.material,
-        thickness_mm: setup.thickness_mm,
-      });
-      const quality = computeQualityIndex({
-        std_v: features.std_v,
-        sc_count: features.sc_count,
-        crest_factor: features.crest_factor,
-        score: p.score,
-        ewma: mean,
-      }).value;
-      prevScore = p.score;
-      return { ...p, physics, thresholdValue, warmup, quality };
-    });
-  }, [points, profile, setup.material, setup.thickness_mm]);
+    return points.map((p) => ({
+      ...p,
+      physics: physicsFromBackend(p),
+      thresholdValue: p.threshold,
+      quality: p.quality_index,
+    }));
+  }, [points]);
 
   // traceability: whenever a new anomaly enters `enriched`, append to history
   const lastTracedRef = useRef<number>(0);
@@ -202,12 +199,12 @@ function Dashboard() {
     const fresh = enriched.slice(lastTracedRef.current);
     if (!fresh.length) return;
     const anomalies = fresh
-      .filter((e) => e.physics.severity !== "NORMAL")
+      .filter((e) => e.physics && e.physics.severity !== "NORMAL")
       .map<HistoryEvent>((e) => ({
         timestamp: e.timestamp ?? Date.now(),
         material: setup.material,
         thickness_mm: setup.thickness_mm,
-        severity: e.physics.severity,
+        severity: e.physics!.severity,
         quality: e.quality,
         score: e.score,
       }));
@@ -216,14 +213,13 @@ function Dashboard() {
   }, [enriched, history, persistHistory, setup.material, setup.thickness_mm]);
 
   const stats = useMemo(() => {
-    const anomalies = enriched.filter((p) => p.physics.severity !== "NORMAL").length;
+    const anomalies = enriched.filter((p) => p.physics && p.physics.severity !== "NORMAL").length;
     const latest = enriched.at(-1);
-    const avgQ = enriched.length ? Math.round(enriched.reduce((s, e) => s + e.quality, 0) / enriched.length) : 0;
     return {
       windows: enriched.length,
       anomalies,
-      threshold: latest?.thresholdValue ?? DEFAULT_FLOOR,
-      quality: latest?.quality ?? avgQ,
+      threshold: latest?.thresholdValue,
+      quality: latest?.quality,
     };
   }, [enriched]);
 
@@ -231,26 +227,35 @@ function Dashboard() {
 
   const rolling = useMemo(
     () =>
-      enriched.slice(-ROLLING).map((p) => ({
-        distance: p.distance_mm,
-        score: p.score,
-        threshold: p.thresholdValue,
-        status: p.status,
-        severity: p.physics.severity,
-        colour: p.physics.colour,
-        voltage: p.voltage ?? 0,
-      })),
+      enriched
+        .slice(-ROLLING)
+        .map((p) => ({
+          distance: p.distance_mm,
+          score: p.score,
+          threshold: p.thresholdValue,
+          status: p.status,
+          severity: p.physics?.severity,
+          colour: p.physics?.colour,
+          voltage: p.voltage,
+        }))
+        .filter((p) => typeof p.distance === "number"),
     [enriched],
   );
-  const rawVoltage = useMemo(() => rolling.map((r) => ({ distance: r.distance, voltage: r.voltage })), [rolling]);
+  const rawVoltage = useMemo(
+    () =>
+      rolling
+        .filter((r): r is typeof r & { distance: number; voltage: number } => typeof r.voltage === "number")
+        .map((r) => ({ distance: r.distance, voltage: r.voltage })),
+    [rolling],
+  );
 
   const anomalyRegions = useMemo(() => {
     const out: Array<{ x1: number; x2: number }> = [];
     let start: number | null = null;
     for (let i = 0; i < rolling.length; i++) {
-      if (rolling[i].severity !== "NORMAL" && start === null) start = rolling[i].distance;
+      if (rolling[i].severity && rolling[i].severity !== "NORMAL" && start === null) start = rolling[i].distance;
       const next = rolling[i + 1];
-      if (start !== null && (!next || next.severity === "NORMAL")) {
+      if (start !== null && (!next || next.severity === "NORMAL" || !next.severity)) {
         out.push({ x1: start, x2: rolling[i].distance });
         start = null;
       }
@@ -258,22 +263,28 @@ function Dashboard() {
     return out;
   }, [rolling]);
 
-  const clusterResult = useMemo(() => (points.length >= 6 ? dbscan2d(points) : null), [points]);
+  const clusterPoints = useMemo(
+    () =>
+      points.filter(
+        (p): p is WindowPoint & { embedding_x: number; embedding_y: number } =>
+          typeof p.embedding_x === "number" && typeof p.embedding_y === "number",
+      ),
+    [points],
+  );
+  const clusterResult = useMemo(() => (clusterPoints.length >= 6 ? dbscan2d(clusterPoints) : null), [clusterPoints]);
   const scatterGroups = useMemo(() => {
-    const normal: WindowPoint[] = [];
-    const outlier: WindowPoint[] = [];
+    const normal: Array<WindowPoint & { embedding_x: number; embedding_y: number }> = [];
+    const outlier: Array<WindowPoint & { embedding_x: number; embedding_y: number }> = [];
     if (clusterResult)
-      points.forEach((p, i) => (clusterResult.labels[i] === -1 ? outlier.push(p) : normal.push(p)));
+      clusterPoints.forEach((p, i) => (clusterResult.labels[i] === -1 ? outlier.push(p) : normal.push(p)));
     return { normal, outlier };
-  }, [points, clusterResult]);
+  }, [clusterPoints, clusterResult]);
 
-  const quality = computeQualityIndex({
-    std_v: latestPhysics?.features.std_v ?? 0.4,
-    sc_count: latestPhysics?.features.sc_count ?? 2,
-    crest_factor: latestPhysics?.features.crest_factor ?? 1.1,
-    score: enriched.at(-1)?.score ?? 0,
-    ewma: enriched.at(-1)?.score ?? 0,
-  });
+  const latestQuality = enriched.at(-1)?.quality;
+  const quality: { value: number; band: QualityBand } | null = latestQuality == null ? null : {
+    value: latestQuality,
+    band: latestQuality >= 85 ? "Excellent" : latestQuality >= 70 ? "Good" : latestQuality >= 50 ? "Monitor" : "Poor",
+  };
 
   const hasData = enriched.length > 0;
 
@@ -291,7 +302,7 @@ function Dashboard() {
                 }}
               />
               <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-                MIG-WeldSight AI · Industrial Monitoring · {tabLabel(tab, streamStatus)}
+                MIG-WeldSight AI Â· Industrial Monitoring Â· {tabLabel(tab, streamStatus)}
               </span>
             </div>
             <button
@@ -303,7 +314,7 @@ function Dashboard() {
           </div>
           <h1 className="mt-4 text-4xl font-normal tracking-tight md:text-5xl">MIG-WeldSight AI</h1>
           <p className="mt-3 text-lg italic text-muted-foreground">
-            Material- and thickness-aware welding intelligence — every anomaly explained, every event traceable.
+            Material- and thickness-aware welding intelligence â€” every anomaly explained, every event traceable.
           </p>
         </header>
 
@@ -311,6 +322,11 @@ function Dashboard() {
         <div className="mt-8">
           <ProcessSetupPanel setup={setup} onChange={setSetup} profile={profile} />
         </div>
+        {apiError && (
+          <div className="mt-4 rounded-xl border border-border bg-card px-4 py-3 text-sm italic text-muted-foreground">
+            {apiError}
+          </div>
+        )}
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mt-8">
@@ -329,7 +345,7 @@ function Dashboard() {
                   <h2 className="text-2xl">Upload Raw MIG Voltage CSV</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
                     The capture is processed against the active{" "}
-                    <span className="italic">{setup.material} · {setup.thickness_mm} mm</span> profile.
+                    <span className="italic">{setup.material} Â· {setup.thickness_mm} mm</span> profile.
                     Physics events, weld quality, and traceability records populate below.
                   </p>
                   {fileName && <p className="mt-3 text-sm italic">Selected: {fileName}</p>}
@@ -344,7 +360,7 @@ function Dashboard() {
                     disabled={loading}
                     className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
                   >
-                    {loading ? "Analyzing…" : "Run Analysis"}
+                    {loading ? "Analyzingâ€¦" : "Run Analysis"}
                   </button>
                 </div>
               </div>
@@ -357,8 +373,8 @@ function Dashboard() {
           <TabsContent value="live" className="mt-6 space-y-6">
             <section className="rounded-2xl border border-border bg-card p-8 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl">Live Monitoring · ESP32 Stream</h2>
-                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{liveBanner(streamStatus)}</span>
+                <h2 className="text-2xl">Live Monitoring Â· ESP32 Stream</h2>
+                <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{liveBanner(streamStatus, hasData)}</span>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
                 Hardware streams raw voltage + distance to the backend, which performs feature extraction,
@@ -369,7 +385,9 @@ function Dashboard() {
 
             {hasData ? <DashboardBody /> : (
               <div className="rounded-2xl border border-dashed border-border/70 bg-card p-12 text-center text-sm italic text-muted-foreground">
-                Awaiting first window from <code>{import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/live"}</code>…
+                <div>No live telemetry available</div>
+                <div className="mt-1">Waiting for ESP32 connection...</div>
+                <div className="mt-3 text-xs not-italic">WebSocket: <code>{WS_LIVE_URL}</code></div>
               </div>
             )}
           </TabsContent>
@@ -379,7 +397,6 @@ function Dashboard() {
             <TrainingPanel
               setup={setup}
               onProfileLearned={(p) => {
-                saveProfile(p);
                 setProfile(p);
               }}
             />
@@ -392,7 +409,7 @@ function Dashboard() {
         </Tabs>
 
         <footer className="mt-12 border-t border-border pt-6 text-center text-xs italic text-muted-foreground">
-          MIG-WeldSight AI · Industrial Intelligence Platform · Backend: FastAPI / Render · Hardware: ESP32 + ADS1115
+          MIG-WeldSight AI Â· Industrial Intelligence Platform Â· Backend: FastAPI / Render Â· Hardware: ESP32 + ADS1115
         </footer>
       </div>
     </div>
@@ -405,8 +422,8 @@ function Dashboard() {
         <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KPI label="Windows Processed" value={stats.windows} />
           <KPI label="Anomalies Found" value={stats.anomalies} accent={stats.anomalies > 0} />
-          <KPI label="Adaptive Threshold" value={stats.threshold.toFixed(2)} sub={profile ? `k=${profile.learned_k.toFixed(2)}` : "untrained"} />
-          <QualityIndexCard value={quality.value} band={quality.band} />
+          <KPI label="Adaptive Threshold" value={formatMetric(stats.threshold)} sub={profile ? `k=${profile.learned_k.toFixed(2)}` : "backend data only"} />
+          <QualityIndexCard value={quality?.value} band={quality?.band} />
         </section>
 
         {/* Raw Voltage */}
@@ -460,9 +477,9 @@ function Dashboard() {
         {/* Recent Events Table */}
         <RecentEventsTable
           rows={enriched.map((e) => ({
-            timestamp: e.timestamp ?? Date.now(),
+            timestamp: e.timestamp,
             distance_mm: e.distance_mm,
-            voltage: e.voltage ?? 0,
+            voltage: e.voltage,
             score: e.score,
             threshold: e.thresholdValue,
             quality: e.quality,
@@ -471,20 +488,20 @@ function Dashboard() {
           }))}
         />
 
-        {/* PCA / DBSCAN — unchanged */}
+        {/* PCA / DBSCAN â€” unchanged */}
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
           <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-2xl">Process State Separation</h2>
-              <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">PCA · DBSCAN</span>
+              <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">PCA Â· DBSCAN</span>
             </div>
             <div className="h-[340px] w-full">
               {clusterResult ? (
                 <ResponsiveContainer>
                   <ScatterChart margin={{ top: 10, right: 20, bottom: 50, left: 10 }}>
                     <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
-                    <XAxis type="number" dataKey="embedding_x" name="PC1" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding · PC1", position: "insideBottom", offset: -36, fill: "var(--muted-foreground)" }} />
-                    <YAxis type="number" dataKey="embedding_y" name="PC2" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding · PC2", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)" }} />
+                    <XAxis type="number" dataKey="embedding_x" name="PC1" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding Â· PC1", position: "insideBottom", offset: -36, fill: "var(--muted-foreground)" }} />
+                    <YAxis type="number" dataKey="embedding_y" name="PC2" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding Â· PC2", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)" }} />
                     <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
                     <Legend verticalAlign="top" height={32} wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }} />
                     <Scatter name="Normal Cluster" data={scatterGroups.normal} fill="var(--status-stable)" />
@@ -501,9 +518,9 @@ function Dashboard() {
           <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
             <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Cluster State</div>
             <div className="mt-6 space-y-5">
-              <Row label="Clusters" value={clusterResult?.clusters ?? 0} />
-              <Row label="Outliers" value={clusterResult?.noise ?? 0} accent />
-              <Row label="Density Points" value={clusterResult ? points.length - clusterResult.noise : 0} />
+              <Row label="Clusters" value={formatMetric(clusterResult?.clusters, 0)} />
+              <Row label="Outliers" value={formatMetric(clusterResult?.noise, 0)} accent />
+              <Row label="Density Points" value={clusterResult ? clusterPoints.length - clusterResult.noise : "--"} />
             </div>
           </div>
         </section>
@@ -513,18 +530,35 @@ function Dashboard() {
 }
 
 function tabLabel(tab: Tab, status: string) {
-  if (tab === "live") return `Live · ${status}`;
+  if (tab === "live") return `Live Â· ${status}`;
   if (tab === "upload") return "Upload Analysis";
   if (tab === "training") return "Training & Calibration";
   return "Historical Analytics";
 }
-function liveBanner(status: string) {
-  if (status === "open") return "Connected · backend WebSocket";
-  if (status === "simulated") return "Simulated stream — no backend detected";
-  if (status === "connecting") return "Connecting…";
-  if (status === "closed") return "Disconnected";
-  return "Idle";
+function eventTimestamp(timestamp?: number | string, ts?: string) {
+  if (typeof timestamp === "number") return timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
+  if (typeof timestamp === "string") return new Date(timestamp).getTime();
+  if (ts) return new Date(ts).getTime();
+  return Date.now();
 }
+function liveBanner(status: string, hasData: boolean) {
+  const backend =
+    status === "open" ? "Backend: Connected" :
+    status === "connecting" ? "Backend: Connecting" :
+    status === "idle" ? "Backend: Idle" :
+    "Backend: Disconnected";
+  return `${backend} - Stream: ${hasData ? "Active" : "Inactive"} - ESP32: ${hasData ? "Connected" : "Disconnected"}`;
+}
+
+function formatMetric(value?: number, fractionDigits = 2) {
+  return typeof value === "number" ? value.toFixed(fractionDigits) : "--";
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 
 function KPI({ label, value, accent, sub }: { label: string; value: number | string; accent?: boolean; sub?: string }) {
   return (

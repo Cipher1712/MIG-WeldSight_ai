@@ -1,16 +1,15 @@
-// Physics-aware classifier for MIG voltage windows. Maps raw window
-// statistics into a severity tier with a human-readable explanation.
-// Severity tiers are colour-coded in the UI.
+// Physics event normalization for backend-provided MIG welding telemetry.
+// The frontend does not synthesize telemetry, features, severity, or diagnoses.
 
 export type Severity = "NORMAL" | "INFO" | "WARNING" | "CRITICAL";
 
 export interface WindowFeatures {
-  mean_v: number;
-  std_v: number;
-  min_v: number;
-  max_v: number;
-  sc_count: number;      // short-circuit transition count
-  crest_factor: number;  // peak / rms
+  mean_v?: number;
+  std_v?: number;
+  min_v?: number;
+  max_v?: number;
+  sc_count?: number;
+  crest_factor?: number;
 }
 
 export interface PhysicsResult {
@@ -18,7 +17,7 @@ export interface PhysicsResult {
   display_label: string;
   physics_label: string;
   physics_text: string;
-  colour: string;          // CSS var
+  colour: string;
   features: WindowFeatures;
   possible_causes: string[];
   recommended_actions: string[];
@@ -31,100 +30,59 @@ export const SEVERITY_COLOUR: Record<Severity, string> = {
   CRITICAL: "var(--status-anomaly)",
 };
 
-/**
- * Derive physics-style features from a single score + its neighbours.
- * Real systems read raw voltage samples; here we synthesise consistent
- * features from the score so the UI is meaningful in both modes.
- */
-export function deriveFeatures(score: number, prevScore = 0, idx = 0): WindowFeatures {
-  const noise = (Math.sin(idx * 1.7) + 1) / 2; // 0..1 deterministic
-  const mean_v = 19.2 + score * 0.35 + noise * 0.4;
-  const std_v = 0.4 + score * 0.22 + Math.abs(score - prevScore) * 0.1;
-  const min_v = mean_v - 2.4 - std_v * 1.6;
-  const max_v = mean_v + 2.8 + std_v * 1.9 + (score > 4 ? 1.2 : 0);
-  const sc_count = Math.max(0, Math.round(score * 1.4 + noise * 2));
-  const rms = Math.sqrt(mean_v * mean_v + std_v * std_v);
-  const crest_factor = +(max_v / Math.max(rms, 1e-3)).toFixed(3);
+export function physicsFromBackend(p: {
+  severity?: string;
+  display_label?: string;
+  physics_label?: string;
+  diagnosis?: string;
+  recommendation?: string;
+  possible_causes?: string[];
+  recommended_actions?: string[];
+  voltage_features?: Partial<WindowFeatures> & { short_circuit_count?: number };
+}): PhysicsResult | null {
+  const severity = normalizeSeverity(p.severity);
+  const displayLabel = p.display_label ?? labelFromPhysics(p.physics_label);
+  const features = p.voltage_features
+    ? {
+        mean_v: numberOrUndefined(p.voltage_features.mean_v),
+        std_v: numberOrUndefined(p.voltage_features.std_v),
+        min_v: numberOrUndefined(p.voltage_features.min_v),
+        max_v: numberOrUndefined(p.voltage_features.max_v),
+        sc_count: numberOrUndefined(p.voltage_features.sc_count ?? p.voltage_features.short_circuit_count),
+        crest_factor: numberOrUndefined(p.voltage_features.crest_factor),
+      }
+    : {};
+
+  if (!severity && !displayLabel && !p.diagnosis && !p.recommendation && !p.voltage_features) return null;
+
+  const resolvedSeverity = severity ?? "INFO";
   return {
-    mean_v: +mean_v.toFixed(3),
-    std_v: +std_v.toFixed(3),
-    min_v: +min_v.toFixed(3),
-    max_v: +max_v.toFixed(3),
-    sc_count,
-    crest_factor,
+    severity: resolvedSeverity,
+    display_label: displayLabel ?? "Backend Event",
+    physics_label: p.physics_label ?? "backend_event",
+    physics_text: p.diagnosis ?? "Backend did not include a diagnosis for this window.",
+    colour: SEVERITY_COLOUR[resolvedSeverity],
+    features,
+    possible_causes: p.possible_causes ?? [],
+    recommended_actions: p.recommended_actions ?? (p.recommendation ? [p.recommendation] : []),
   };
 }
 
-export function classifyWindow(
-  score: number,
-  threshold: number,
-  features: WindowFeatures,
-  ctx: { material?: string; thickness_mm?: number } = {},
-): PhysicsResult {
-  const ratio = score / Math.max(threshold, 1e-3);
+function normalizeSeverity(value?: string): Severity | null {
+  if (value === "NORMAL" || value === "INFO" || value === "WARNING" || value === "CRITICAL") return value;
+  if (value === "POOR") return "WARNING";
+  return null;
+}
 
-  let severity: Severity = "NORMAL";
-  let physics_label = "stable_arc";
-  let display_label = "Stable Arc";
-  let physics_text = "Window within normal operating envelope. Mean voltage, deviation, and short-circuit cadence all nominal.";
-  let possible_causes: string[] = [];
-  let recommended_actions: string[] = [];
+function labelFromPhysics(label?: string) {
+  if (!label) return undefined;
+  return label
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
-  if (ratio >= 1.8 || features.crest_factor > 1.35) {
-    severity = "CRITICAL";
-    physics_label = "short_circuit_abnormality";
-    display_label = "Short-Circuit Abnormality";
-    physics_text = `Crest factor ${features.crest_factor} and short-circuit count ${features.sc_count} exceed safe envelope. Wire feed or contact tip distance likely compromised.`;
-    possible_causes = [
-      "Excessive contact-tip-to-work distance (CTWD)",
-      "Wire feeder slippage or worn liner",
-      "Insufficient shielding gas flow",
-    ];
-    recommended_actions = [
-      "Reduce CTWD to within 10–15 mm",
-      "Inspect wire liner, drive rolls and tension",
-      "Verify gas flow ≥ 12 L/min and check for leaks",
-    ];
-  } else if (ratio >= 1.25 || features.std_v > 1.6) {
-    severity = "WARNING";
-    physics_label = "arc_instability";
-    display_label = "Arc Instability";
-    physics_text = `Voltage deviation σ=${features.std_v} is high relative to mean. Indicates erratic arc length — check shielding gas flow and travel speed.`;
-    possible_causes = [
-      "Magnetic arc blow on " + (ctx.material ?? "workpiece"),
-      "Contaminated workpiece surface (mill scale, oil)",
-      "Inconsistent torch angle / travel speed",
-    ];
-    recommended_actions = [
-      "Verify grounding clamp placement",
-      "Clean workpiece with wire brush / solvent",
-      "Stabilise torch angle at 10–15° drag",
-    ];
-  } else if (ratio >= 0.95) {
-    severity = "INFO";
-    physics_label = "transfer_change";
-    display_label = "Transfer Mode Change";
-    physics_text = `Score approaches threshold (${score.toFixed(2)} / ${threshold.toFixed(2)}). Metal-transfer regime may be shifting (spray ↔ globular).`;
-    possible_causes = [
-      "Voltage drift across the joint",
-      `Thickness change (set: ${ctx.thickness_mm ?? "?"} mm)`,
-      "Wire feed speed approaching transition band",
-    ];
-    recommended_actions = [
-      "Confirm voltage setpoint matches material/thickness",
-      "Check WFS calibration",
-      "Review joint preparation for thickness variation",
-    ];
-  }
-
-  return {
-    severity,
-    display_label,
-    physics_label,
-    physics_text,
-    colour: SEVERITY_COLOUR[severity],
-    features,
-    possible_causes,
-    recommended_actions,
-  };
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }

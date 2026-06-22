@@ -2,14 +2,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { PhysicsResult } from "@/lib/physicsClassifier";
 
 export interface EventRow {
-  timestamp: number;
-  distance_mm: number;
-  voltage: number;
-  score: number;
-  threshold: number;
-  quality: number;
-  physics: PhysicsResult;
-  status: "Stable" | "Anomaly";
+  timestamp?: number;
+  distance_mm?: number;
+  voltage?: number;
+  score?: number;
+  threshold?: number;
+  quality?: number;
+  physics: PhysicsResult | null;
+  status?: "Stable" | "Anomaly";
 }
 
 export function RecentEventsTable({ rows }: { rows: EventRow[] }) {
@@ -44,32 +44,36 @@ export function RecentEventsTable({ rows }: { rows: EventRow[] }) {
                   exit={{ opacity: 0 }}
                   style={{
                     background:
-                      r.physics.severity === "CRITICAL"
+                      r.physics?.severity === "CRITICAL"
                         ? "color-mix(in oklab, var(--status-anomaly) 8%, transparent)"
-                        : r.physics.severity === "WARNING"
+                        : r.physics?.severity === "WARNING"
                           ? "color-mix(in oklab, var(--status-warning) 6%, transparent)"
                           : undefined,
                   }}
                 >
                   <Td muted>{formatClock(r.timestamp)}</Td>
-                  <Td>{r.distance_mm.toFixed(2)} mm</Td>
-                  <Td>{r.voltage.toFixed(2)} V</Td>
+                  <Td>{formatNumber(r.distance_mm, "mm")}</Td>
+                  <Td>{formatNumber(r.voltage, "V")}</Td>
                   <Td>
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full" style={{ background: r.physics.colour, boxShadow: `0 0 8px ${r.physics.colour}` }} />
-                      <span style={{ color: r.physics.colour }}>{r.physics.display_label}</span>
-                    </span>
+                    {r.physics ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full" style={{ background: r.physics.colour, boxShadow: `0 0 8px ${r.physics.colour}` }} />
+                        <span style={{ color: r.physics.colour }}>{r.physics.display_label}</span>
+                      </span>
+                    ) : "--"}
                   </Td>
                   <Td>
-                    <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: r.physics.colour }}>
-                      {r.physics.severity}
-                    </span>
+                    {r.physics ? (
+                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: r.physics.colour }}>
+                        {r.physics.severity}
+                      </span>
+                    ) : "--"}
                   </Td>
-                  <Td style={{ color: "var(--status-warning)" }}>{r.threshold.toFixed(2)}</Td>
-                  <Td>{r.quality}</Td>
+                  <Td style={{ color: "var(--status-warning)" }}>{formatNumber(r.threshold)}</Td>
+                  <Td>{typeof r.quality === "number" ? r.quality : "--"}</Td>
                   <Td>
-                    <span style={{ color: r.status === "Anomaly" ? "var(--status-anomaly)" : "var(--status-stable)" }}>
-                      {r.status}
+                    <span style={{ color: r.status === "Anomaly" ? "var(--status-anomaly)" : r.status === "Stable" ? "var(--status-stable)" : undefined }}>
+                      {r.status ?? "--"}
                     </span>
                   </Td>
                 </motion.tr>
@@ -93,7 +97,13 @@ function Td({ children, muted, style }: { children: React.ReactNode; muted?: boo
   );
 }
 
-function formatClock(ts: number) {
+function formatClock(ts?: number) {
+  if (typeof ts !== "number") return "--";
   const d = new Date(ts);
   return d.toLocaleTimeString([], { hour12: false });
+}
+
+function formatNumber(value?: number, unit?: string) {
+  if (typeof value !== "number") return "--";
+  return `${value.toFixed(2)}${unit ? ` ${unit}` : ""}`;
 }

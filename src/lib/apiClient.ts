@@ -121,16 +121,21 @@ export const weldSightApi = {
 };
 
 export function normalizeProfile(profile: BaselineProfile): BaselineProfile {
-  const updatedAt = profile.updated_at ?? Date.now();
+  const updatedAt = profile.updated_at;
   const updatedAtMs = typeof updatedAt === "number" ? updatedAt : new Date(updatedAt).getTime();
   return {
     ...profile,
     material: profile.material as MaterialKey,
-    updated_at: Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now(),
+    updated_at: Number.isFinite(updatedAtMs) ? updatedAtMs : undefined,
     threshold: profile.threshold == null ? undefined : Number(profile.threshold),
-    voltage_min: Number(profile.voltage_min ?? 0),
-    voltage_max: Number(profile.voltage_max ?? 0),
-    rms_min: Number(profile.rms_min ?? 0),
-    rms_max: Number(profile.rms_max ?? 0),
+    voltage_min: numberOrUndefined(profile.voltage_min),
+    voltage_max: numberOrUndefined(profile.voltage_max),
+    rms_min: numberOrUndefined(profile.rms_min),
+    rms_max: numberOrUndefined(profile.rms_max),
   };
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }

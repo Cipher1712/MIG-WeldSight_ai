@@ -7,8 +7,8 @@ export interface HistoryEvent {
   material: string;
   thickness_mm: number;
   severity: Severity;
-  quality: number;
-  score: number;
+  quality?: number;
+  score?: number;
 }
 
 export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
@@ -21,6 +21,7 @@ export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
   const trend = useMemo(() => {
     const buckets: Record<string, { day: string; quality: number; n: number; anomalies: number }> = {};
     events.forEach((e) => {
+      if (typeof e.quality !== "number") return;
       const day = new Date(e.timestamp).toISOString().slice(0, 10);
       const b = (buckets[day] ??= { day, quality: 0, n: 0, anomalies: 0 });
       b.quality += e.quality;
@@ -31,6 +32,8 @@ export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
       .map((b) => ({ day: b.day, quality: Math.round(b.quality / b.n), anomalyRate: Math.round((b.anomalies / b.n) * 100) }))
       .sort((a, b) => a.day.localeCompare(b.day));
   }, [events]);
+
+  const qualityEvents = useMemo(() => events.filter((e) => typeof e.quality === "number"), [events]);
 
   const perMaterial = useMemo(() => {
     const grp: Record<string, { key: string; anomalies: number; total: number }> = {};
@@ -56,23 +59,32 @@ export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Stat label="Total Events" value={events.length} />
         <Stat label="Anomaly Rate" value={`${pct(events.filter((e) => e.severity !== "NORMAL").length, events.length)}%`} />
-        <Stat label="Avg Quality" value={Math.round(events.reduce((s, e) => s + e.quality, 0) / events.length)} />
+        <Stat
+          label="Avg Quality"
+          value={qualityEvents.length ? Math.round(qualityEvents.reduce((s, e) => s + e.quality!, 0) / qualityEvents.length) : "--"}
+        />
       </div>
 
-      <Card title="Quality Index Trend">
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <LineChart data={trend} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
-              <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
-              <XAxis dataKey="day" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} />
-              <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} domain={[0, 100]} />
-              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
-              <Line type="monotone" dataKey="quality" stroke="var(--status-stable)" strokeWidth={2} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="anomalyRate" stroke="var(--status-anomaly)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+      {trend.length ? (
+        <Card title="Quality Index Trend">
+          <div className="h-[220px]">
+            <ResponsiveContainer>
+              <LineChart data={trend} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
+                <XAxis dataKey="day" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} />
+                <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                <Line type="monotone" dataKey="quality" stroke="var(--status-stable)" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="anomalyRate" stroke="var(--status-anomaly)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border/70 bg-card p-12 text-center text-sm italic text-muted-foreground">
+          No live quality telemetry available for trend charts.
         </div>
-      </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Severity Breakdown">

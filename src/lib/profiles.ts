@@ -1,8 +1,5 @@
-// Material + thickness based profile model. Profiles are normally provisioned
-// by the backend (training pipeline). The frontend caches them in
-// localStorage so the operator sees status (trained / untrained, samples,
-// updated_at) immediately after page load and so Live mode can render a
-// sensible Adaptive Threshold while the WS hand-shake completes.
+// Material + thickness based profile model. Profiles are provisioned by the
+// backend training pipeline and read from /api/profiles.
 
 export const MATERIALS = [
   { key: "mild_steel", label: "Mild Steel" },
@@ -32,36 +29,14 @@ export interface BaselineProfile {
   learned_k: number;
   mean_score: number;
   std_score: number;
-  voltage_min: number;
-  voltage_max: number;
-  rms_min: number;
-  rms_max: number;
+  voltage_min?: number;
+  voltage_max?: number;
+  rms_min?: number;
+  rms_max?: number;
   trained_windows: number;
   updated_at?: number | string; // normalized to epoch ms before display
 }
 
 export function profileKey(s: ProcessSetup): string {
   return `${s.material}_${s.thickness_mm}mm`;
-}
-
-const STORAGE = "weldsight.profiles.v1";
-
-export function loadProfiles(): Record<string, BaselineProfile> {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-export function saveProfile(p: BaselineProfile) {
-  if (typeof window === "undefined") return;
-  const all = loadProfiles();
-  all[profileKey(p)] = p;
-  localStorage.setItem(STORAGE, JSON.stringify(all));
-}
-
-export function getProfile(s: ProcessSetup): BaselineProfile | null {
-  return loadProfiles()[profileKey(s)] ?? null;
 }
