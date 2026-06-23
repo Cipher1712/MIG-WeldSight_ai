@@ -32,6 +32,7 @@ export const SEVERITY_COLOUR: Record<Severity, string> = {
 
 export function physicsFromBackend(p: {
   severity?: string;
+  prediction?: string;
   display_label?: string;
   physics_label?: string;
   diagnosis?: string;
@@ -41,7 +42,7 @@ export function physicsFromBackend(p: {
   voltage_features?: Partial<WindowFeatures> & { short_circuit_count?: number };
 }): PhysicsResult | null {
   const severity = normalizeSeverity(p.severity);
-  const displayLabel = p.display_label ?? labelFromPhysics(p.physics_label);
+  const displayLabel = p.display_label ?? p.prediction ?? labelFromPhysics(p.physics_label);
   const features = p.voltage_features
     ? {
         mean_v: numberOrUndefined(p.voltage_features.mean_v),
@@ -76,10 +77,15 @@ function normalizeSeverity(value?: string): Severity | null {
 
 function labelFromPhysics(label?: string) {
   if (!label) return undefined;
-  return label
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  const normalized = label.toLowerCase();
+  if (normalized.includes("healthy")) return "Healthy Arc";
+  if (normalized.includes("cold") || normalized.includes("low_heat")) return "Low Heat Input Risk";
+  if (normalized.includes("transfer") || normalized.includes("spatter")) return "Spatter Risk";
+  if (normalized.includes("burn")) return "Burn Through Risk";
+  if (normalized.includes("instability") || normalized.includes("unstable") || normalized.includes("arc")) {
+    return "Arc Instability";
+  }
+  return undefined;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

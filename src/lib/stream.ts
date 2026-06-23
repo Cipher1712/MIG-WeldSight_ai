@@ -4,7 +4,7 @@ export type WindowPoint = {
   distance_mm?: number;
   score?: number;
   status?: "Stable" | "Anomaly";
-  class?: "Normal" | "Arc Instability" | "Transfer Change" | "Short Circuit Abnormality";
+  class?: "Healthy Arc" | "Arc Instability" | "Spatter Risk" | "Burn Through Risk" | "Low Heat Input Risk";
   embedding_x?: number;
   embedding_y?: number;
   threshold?: number;
@@ -12,23 +12,29 @@ export type WindowPoint = {
   arc_on?: boolean;
   timestamp?: number;
   quality_index?: number;
+  prediction?: BackendFrame["prediction"];
   severity?: string;
   physics_label?: string;
   ml_label?: string;
   confidence?: number;
   diagnosis?: string;
   recommendation?: string;
+  arc_instability_score?: number;
+  spatter_risk_score?: number;
+  burn_through_risk_score?: number;
+  low_heat_input_score?: number;
   display_label?: string;
   possible_causes?: string[];
   recommended_actions?: string[];
   top_contributors?: BackendFrame["top_contributors"];
   top_features?: BackendFrame["top_features"];
+  quality_breakdown?: BackendFrame["quality_breakdown"];
   voltage_features?: BackendFrame["voltage_features"];
 };
 
 export function mapBackendFrame(frame: BackendFrame, embedding?: number[]): WindowPoint {
   const severity = frame.severity;
-  const display = frame.display_label ?? labelFromPhysics(frame.physics_label);
+  const display = frame.display_label ?? frame.prediction ?? labelFromPhysics(frame.physics_label);
   return {
     distance_mm: numberOrUndefined(frame.distance_mm),
     score: numberOrUndefined(frame.anomaly_score),
@@ -40,17 +46,23 @@ export function mapBackendFrame(frame: BackendFrame, embedding?: number[]): Wind
     voltage: numberOrUndefined(frame.voltage ?? frame.voltage_features?.mean_v),
     timestamp: normalizeTimestamp(frame.timestamp),
     quality_index: numberOrUndefined(frame.quality_index ?? frame.quality_score),
+    prediction: frame.prediction,
     severity,
     physics_label: frame.physics_label,
     ml_label: frame.ml_label,
-    confidence: frame.confidence,
+    confidence: numberOrUndefined(frame.confidence),
     diagnosis: frame.diagnosis,
     recommendation: frame.recommendation,
+    arc_instability_score: numberOrUndefined(frame.arc_instability_score),
+    spatter_risk_score: numberOrUndefined(frame.spatter_risk_score),
+    burn_through_risk_score: numberOrUndefined(frame.burn_through_risk_score),
+    low_heat_input_score: numberOrUndefined(frame.low_heat_input_score),
     display_label: display,
     possible_causes: frame.possible_causes,
     recommended_actions: frame.recommended_actions,
     top_contributors: frame.top_contributors,
     top_features: frame.top_features,
+    quality_breakdown: frame.quality_breakdown,
     voltage_features: frame.voltage_features,
   };
 }
@@ -117,10 +129,15 @@ function normalizeTimestamp(ts: BackendFrame["timestamp"]) {
 
 function labelFromPhysics(label?: string) {
   if (!label) return undefined;
-  return label
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  const normalized = label.toLowerCase();
+  if (normalized.includes("healthy")) return "Healthy Arc";
+  if (normalized.includes("cold") || normalized.includes("low_heat")) return "Low Heat Input Risk";
+  if (normalized.includes("transfer") || normalized.includes("spatter")) return "Spatter Risk";
+  if (normalized.includes("burn")) return "Burn Through Risk";
+  if (normalized.includes("instability") || normalized.includes("unstable") || normalized.includes("arc")) {
+    return "Arc Instability";
+  }
+  return undefined;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
@@ -130,8 +147,10 @@ function numberOrUndefined(value: unknown): number | undefined {
 
 function classFromLabel(display: string, label?: string): WindowPoint["class"] {
   const text = `${display} ${label ?? ""}`.toLowerCase();
-  if (text.includes("short")) return "Short Circuit Abnormality";
-  if (text.includes("transfer")) return "Transfer Change";
-  if (text.includes("instability") || text.includes("unstable") || text.includes("arc")) return "Arc Instability";
-  return "Normal";
+  if (text.includes("burn")) return "Burn Through Risk";
+  if (text.includes("heat") || text.includes("cold")) return "Low Heat Input Risk";
+  if (text.includes("spatter") || text.includes("transfer")) return "Spatter Risk";
+  if (text.includes("instability") || text.includes("unstable")) return "Arc Instability";
+  if (text.includes("healthy") || text.includes("arc")) return "Healthy Arc";
+  return undefined;
 }

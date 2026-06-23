@@ -38,6 +38,7 @@ import { normalizeProfile, weldSightApi } from "@/lib/apiClient";
 import { ProcessSetupPanel } from "@/components/weldsight/ProcessSetupPanel";
 import { RawVoltageChart } from "@/components/weldsight/RawVoltageChart";
 import { QualityIndexCard } from "@/components/weldsight/QualityIndexCard";
+import { AssessmentDetailsPanel } from "@/components/weldsight/AssessmentDetailsPanel";
 import { PhysicsInsightPanel } from "@/components/weldsight/PhysicsInsightPanel";
 import { PhysicsEventsTimeline } from "@/components/weldsight/PhysicsEventsTimeline";
 import { RecentEventsTable } from "@/components/weldsight/RecentEventsTable";
@@ -257,6 +258,7 @@ function Dashboard() {
   }, [enriched]);
 
   const latestPhysics = enriched.at(-1)?.physics ?? null;
+  const latestAssessment = enriched.at(-1) ?? null;
 
   const rolling = useMemo(
     () =>
@@ -271,7 +273,7 @@ function Dashboard() {
           colour: p.physics?.colour,
           voltage: p.voltage,
         }))
-        .filter((p) => typeof p.distance === "number"),
+        .filter((p): p is typeof p & { distance: number } => typeof p.distance === "number"),
     [enriched],
   );
   const rawVoltage = useMemo(
@@ -451,11 +453,17 @@ function Dashboard() {
     return (
       <>
         {/* KPIs */}
-        <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <section className="grid grid-cols-2 gap-4 md:grid-cols-6">
+          <KPI label="Current Assessment" value={latestAssessment?.prediction ?? "No Data"} />
+          <KPI label="Confidence" value={valueOrNoData(latestAssessment?.confidence)} />
           <KPI label="Windows Processed" value={stats.windows} />
           <KPI label="Anomalies Found" value={stats.anomalies} accent={stats.anomalies > 0} />
           <KPI label="Adaptive Threshold" value={formatMetric(stats.threshold)} sub={profile ? `k=${profile.learned_k.toFixed(2)}` : "backend data only"} />
           <QualityIndexCard value={quality?.value} band={quality?.band} />
+        </section>
+
+        <section className="flex justify-end">
+          <AssessmentDetailsPanel latest={latestAssessment} />
         </section>
 
         {/* Raw Voltage */}
@@ -580,6 +588,11 @@ function liveBanner(status: PollingStatus, hasData: boolean, metrics: LatestMetr
 
 function formatMetric(value?: number, fractionDigits = 2) {
   return typeof value === "number" ? value.toFixed(fractionDigits) : "--";
+}
+
+function valueOrNoData(value?: number | string) {
+  if (value === undefined || value === null || value === "") return "No Data";
+  return String(value);
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

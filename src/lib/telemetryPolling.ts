@@ -19,6 +19,14 @@ export interface LatestTelemetry {
 export interface LatestMetrics {
   quality_index?: number;
   quality_score?: number;
+  prediction?: BackendFrame["prediction"];
+  confidence?: number;
+  arc_instability_score?: number;
+  spatter_risk_score?: number;
+  burn_through_risk_score?: number;
+  low_heat_input_score?: number;
+  top_contributors?: BackendFrame["top_contributors"];
+  quality_breakdown?: BackendFrame["quality_breakdown"];
   stability?: number;
   anomalies?: {
     detected?: boolean;

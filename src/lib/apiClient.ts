@@ -7,6 +7,20 @@ const API_BASE =
 export const API_URL = API_BASE;
 
 export type BackendSeverity = "NORMAL" | "INFO" | "WARNING" | "CRITICAL" | "POOR";
+export type BackendAssessmentLabel =
+  | "Healthy Arc"
+  | "Arc Instability"
+  | "Spatter Risk"
+  | "Burn Through Risk"
+  | "Low Heat Input Risk";
+
+export interface QualityBreakdown {
+  stability?: number;
+  short_circuit?: number;
+  ripple?: number;
+  noise?: number;
+  [key: string]: number | undefined;
+}
 
 export interface BackendFeatures {
   mean_v?: number;
@@ -30,15 +44,20 @@ export interface BackendFrame {
   quality_score?: number;
   quality_index?: number;
   stability_score?: number;
-  prediction?: string;
+  prediction?: BackendAssessmentLabel;
   status?: string;
   diagnosis?: string;
-  top_contributors?: Array<{ feature: string; importance?: number; method?: string }>;
+  recommendation?: string;
+  arc_instability_score?: number;
+  spatter_risk_score?: number;
+  burn_through_risk_score?: number;
+  low_heat_input_score?: number;
+  top_contributors?: Array<{ feature: string; importance?: number; method?: string; value?: number }>;
+  quality_breakdown?: QualityBreakdown;
   severity?: BackendSeverity;
   physics_label?: string;
   ml_label?: string;
   confidence?: number;
-  recommendation?: string;
   top_features?: Array<{ feature: string; importance?: number; method?: string }>;
   display_label?: string;
   possible_causes?: string[];
@@ -123,7 +142,8 @@ export const weldSightApi = {
 
 export function normalizeProfile(profile: BaselineProfile): BaselineProfile {
   const updatedAt = profile.updated_at;
-  const updatedAtMs = typeof updatedAt === "number" ? updatedAt : new Date(updatedAt).getTime();
+  const updatedAtMs =
+    typeof updatedAt === "number" ? updatedAt : updatedAt ? new Date(updatedAt).getTime() : undefined;
   return {
     ...profile,
     material: profile.material as MaterialKey,
