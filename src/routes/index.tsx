@@ -33,7 +33,7 @@ import {
   type BaselineProfile,
   type ProcessSetup,
 } from "@/lib/profiles";
-import { normalizeProfile, weldSightApi } from "@/lib/apiClient";
+import { isRequestAbortError, normalizeProfile, weldSightApi } from "@/lib/apiClient";
 
 import { ProcessSetupPanel } from "@/components/weldsight/ProcessSetupPanel";
 import { RawVoltageChart } from "@/components/weldsight/RawVoltageChart";
@@ -48,7 +48,7 @@ import { HistoricalAnalytics, type HistoryEvent } from "@/components/weldsight/H
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "MIG-WeldSight AI Â· Industrial Welding Monitoring" },
+      { title: "MIG-WeldSight AI" },
       {
         name: "description",
         content:
@@ -97,6 +97,7 @@ function Dashboard() {
       })
       .catch((err) => {
         if (!alive) return;
+        if (isRequestAbortError(err)) return;
         setApiError(err instanceof Error ? err.message : "Unable to load profiles");
         setProfile(null);
       });
@@ -136,7 +137,10 @@ function Dashboard() {
           })),
         ),
       )
-      .catch((err) => setApiError(err instanceof Error ? err.message : "Unable to load events"));
+      .catch((err) => {
+        if (isRequestAbortError(err)) return;
+        setApiError(err instanceof Error ? err.message : "Unable to load events");
+      });
   }, [persistHistory, setup.material, setup.thickness_mm]);
   useEffect(() => refreshHistory(), [refreshHistory]);
 
@@ -210,6 +214,7 @@ function Dashboard() {
       setPoints(result.frames.map((frame, i) => mapBackendFrame(frame, result.cluster?.embeddings?.[i])));
       refreshHistory();
     } catch (err) {
+      if (isRequestAbortError(err)) return;
       setApiError(err instanceof Error ? err.message : "Upload analysis failed");
     } finally {
       setLoading(false);
@@ -329,15 +334,13 @@ function Dashboard() {
         <header className="border-b border-border pb-8">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div
-                className="h-2.5 w-2.5 rounded-full"
-                style={{
-                  background: tab === "live" ? "var(--status-anomaly)" : "var(--status-stable)",
-                  boxShadow: `0 0 12px ${tab === "live" ? "var(--status-anomaly)" : "var(--status-stable)"}`,
-                }}
+              <img
+                src="/favicon.png"
+                alt="WeldSight-AI logo"
+                className="h-8 w-8 rounded-md"
               />
               <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-                MIG-WeldSight AI Â· Industrial Monitoring Â· {tabLabel(tab, pollingStatus)}
+                MIG-WeldSight AI | Industrial Monitoring | {tabLabel(tab, pollingStatus)}
               </span>
             </div>
             <button
@@ -349,7 +352,7 @@ function Dashboard() {
           </div>
           <h1 className="mt-4 text-4xl font-normal tracking-tight md:text-5xl">MIG-WeldSight AI</h1>
           <p className="mt-3 text-lg italic text-muted-foreground">
-            Material- and thickness-aware welding intelligence â€” every anomaly explained, every event traceable.
+            Material- and thickness-aware welding intelligence - every anomaly explained, every event traceable.
           </p>
         </header>
 
@@ -380,7 +383,7 @@ function Dashboard() {
                   <h2 className="text-2xl">Upload Raw MIG Voltage CSV</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
                     The capture is processed against the active{" "}
-                    <span className="italic">{setup.material} Â· {setup.thickness_mm} mm</span> profile.
+                    <span className="italic">{setup.material} | {setup.thickness_mm} mm</span> profile.
                     Physics events, weld quality, and traceability records populate below.
                   </p>
                   {fileName && <p className="mt-3 text-sm italic">Selected: {fileName}</p>}
@@ -395,7 +398,7 @@ function Dashboard() {
                     disabled={loading}
                     className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
                   >
-                    {loading ? "Analyzingâ€¦" : "Run Analysis"}
+                    {loading ? "Analyzing..." : "Run Analysis"}
                   </button>
                 </div>
               </div>
@@ -408,7 +411,7 @@ function Dashboard() {
           <TabsContent value="live" className="mt-6 space-y-6">
             <section className="rounded-2xl border border-border bg-card p-8 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl">Live Monitoring Â· ESP32 Telemetry</h2>
+                <h2 className="text-2xl">Live Monitoring | ESP32 Telemetry</h2>
                 <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{liveBanner(pollingStatus, hasData, latestMetrics)}</span>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -443,7 +446,7 @@ function Dashboard() {
         </Tabs>
 
         <footer className="mt-12 border-t border-border pt-6 text-center text-xs italic text-muted-foreground">
-          MIG-WeldSight AI Â· Industrial Intelligence Platform Â· Backend: FastAPI / Render Â· Hardware: ESP32 + ADS1115
+          MIG-WeldSight AI | Industrial Intelligence Platform | Backend: FastAPI | Render | Hardware: ESP32 + ADS1115
         </footer>
       </div>
     </div>
@@ -528,20 +531,20 @@ function Dashboard() {
           }))}
         />
 
-        {/* PCA / DBSCAN â€” unchanged */}
+        {/* PCA / DBSCAN */}
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
           <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-2xl">Process State Separation</h2>
-              <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">PCA Â· DBSCAN</span>
+              <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">PCA | DBSCAN</span>
             </div>
             <div className="h-[340px] w-full">
               {clusterResult ? (
                 <ResponsiveContainer>
                   <ScatterChart margin={{ top: 10, right: 20, bottom: 50, left: 10 }}>
                     <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} strokeDasharray="2 4" />
-                    <XAxis type="number" dataKey="embedding_x" name="PC1" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding Â· PC1", position: "insideBottom", offset: -36, fill: "var(--muted-foreground)" }} />
-                    <YAxis type="number" dataKey="embedding_y" name="PC2" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding Â· PC2", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)" }} />
+                    <XAxis type="number" dataKey="embedding_x" name="PC1" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding | PC1", position: "insideBottom", offset: -36, fill: "var(--muted-foreground)" }} />
+                    <YAxis type="number" dataKey="embedding_y" name="PC2" stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} label={{ value: "embedding | PC2", angle: -90, position: "insideLeft", fill: "var(--muted-foreground)" }} />
                     <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
                     <Legend verticalAlign="top" height={32} wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }} />
                     <Scatter name="Normal Cluster" data={scatterGroups.normal} fill="var(--status-stable)" />
@@ -570,7 +573,7 @@ function Dashboard() {
 }
 
 function tabLabel(tab: Tab, status: string) {
-  if (tab === "live") return `Live Â· ${status}`;
+  if (tab === "live") return `Live | ${status}`;
   if (tab === "upload") return "Upload Analysis";
   if (tab === "training") return "Training & Calibration";
   return "Historical Analytics";

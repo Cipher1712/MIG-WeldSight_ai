@@ -1,4 +1,4 @@
--- MIG-WeldSight AI · PostgreSQL schema
+-- MIG-WeldSight AI | PostgreSQL schema
 -- Apply once after attaching a Postgres plugin on Railway:
 --   psql $DATABASE_URL -f schema.sql
 

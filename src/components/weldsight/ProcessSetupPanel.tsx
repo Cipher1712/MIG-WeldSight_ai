@@ -65,13 +65,13 @@ export function ProcessSetupPanel({
 
         <Field label="Samples">
           <div className="text-xl tabular-nums">
-            {profile ? profile.trained_windows.toLocaleString() : "—"}
+            {profile ? profile.trained_windows.toLocaleString() : "0"}
           </div>
         </Field>
 
         <Field label="Last Updated">
           <div className="text-sm tabular-nums text-muted-foreground">
-            {profile ? formatProfileDate(profile.updated_at) : "—"}
+            {profile ? formatProfileDate(profile.updated_at) : "Not Trained"}
           </div>
         </Field>
       </div>
@@ -79,7 +79,7 @@ export function ProcessSetupPanel({
       {profile && (
         <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-border bg-background/30 p-4 md:grid-cols-4">
           <Mini label="learned_k" value={profile.learned_k.toFixed(2)} />
-          <Mini label="μ score" value={profile.mean_score.toFixed(2)} />
+          <Mini label="mean score" value={profile.mean_score.toFixed(2)} />
           <Mini label="V envelope" value={formatRange(profile.voltage_min, profile.voltage_max, "V")} />
           <Mini label="RMS envelope" value={formatRange(profile.rms_min, profile.rms_max, "V")} />
         </div>
@@ -107,12 +107,12 @@ function Mini({ label, value }: { label: string; value: string }) {
 }
 
 function formatProfileDate(value: number | string | undefined) {
-  if (value == null) return "--";
+  if (value == null) return "Not Available";
   const time = new Date(value).getTime();
-  return Number.isFinite(time) ? new Date(time).toISOString().slice(0, 10) : "--";
+  return Number.isFinite(time) ? new Date(time).toISOString().slice(0, 10) : "Not Available";
 }
 
 function formatRange(min?: number, max?: number, unit?: string) {
-  if (typeof min !== "number" || typeof max !== "number") return "--";
+  if (typeof min !== "number" || typeof max !== "number") return "Not Available";
   return `${min.toFixed(1)}-${max.toFixed(1)}${unit ? ` ${unit}` : ""}`;
 }

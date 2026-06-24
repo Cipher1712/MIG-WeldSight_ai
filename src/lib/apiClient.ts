@@ -101,6 +101,14 @@ export interface HealthResponse {
 const timeoutMs = 15_000;
 const retries = 2;
 
+export function isRequestAbortError(error: unknown): boolean {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  ) || (
+    error instanceof Error && /aborted without reason|aborterror|the user aborted a request/i.test(error.message)
+  );
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {

@@ -4,7 +4,7 @@ import {
   type BaselineProfile,
   type ProcessSetup,
 } from "@/lib/profiles";
-import { normalizeProfile, weldSightApi } from "@/lib/apiClient";
+import { isRequestAbortError, normalizeProfile, weldSightApi } from "@/lib/apiClient";
 import { parseCsvVoltage } from "@/lib/stream";
 
 export function TrainingPanel({
@@ -45,6 +45,7 @@ export function TrainingPanel({
       setResult(profile);
       onProfileLearned(profile);
     } catch (err) {
+      if (isRequestAbortError(err)) return;
       setError(err instanceof Error ? err.message : "Training failed");
     } finally {
       setTraining(false);
@@ -58,8 +59,8 @@ export function TrainingPanel({
         <p className="mt-2 text-sm text-muted-foreground">
           Upload one or more <span className="italic">known-good</span> weld CSV files.
           The training pipeline learns the baseline process profile for
-          <span className="italic"> {setup.material} · {setup.thickness_mm} mm</span> and
-          stores it. Live monitoring then uses the learned <code>k</code> automatically — no
+          <span className="italic"> {setup.material} | {setup.thickness_mm} mm</span> and
+          stores it. Live monitoring then uses the learned <code>k</code> automatically - no
           operator tuning required.
         </p>
 
@@ -76,7 +77,7 @@ export function TrainingPanel({
             disabled={!files.length || training}
             className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
           >
-            {training ? "Training…" : "Train Baseline"}
+            {training ? "Training..." : "Train Baseline"}
           </button>
         </div>
 
@@ -103,7 +104,7 @@ export function TrainingPanel({
           <div className="flex items-center justify-between">
             <h3 className="text-xl">Learned Baseline</h3>
             <span className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--status-stable)" }}>
-              ✓ Persisted
+              Persisted
             </span>
           </div>
           <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-background/40 p-4 text-xs leading-relaxed text-muted-foreground">

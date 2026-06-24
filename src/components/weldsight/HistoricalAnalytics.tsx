@@ -38,7 +38,7 @@ export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
   const perMaterial = useMemo(() => {
     const grp: Record<string, { key: string; anomalies: number; total: number }> = {};
     events.forEach((e) => {
-      const k = `${e.material} · ${e.thickness_mm}mm`;
+      const k = `${e.material} | ${e.thickness_mm}mm`;
       const g = (grp[k] ??= { key: k, anomalies: 0, total: 0 });
       g.total += 1;
       if (e.severity !== "NORMAL") g.anomalies += 1;
@@ -105,7 +105,7 @@ export function HistoricalAnalytics({ events }: { events: HistoryEvent[] }) {
           </div>
         </Card>
 
-        <Card title="Anomaly Rate · Material × Thickness">
+        <Card title="Anomaly Rate | Material x Thickness">
           <div className="h-[220px]">
             <ResponsiveContainer>
               <BarChart data={perMaterial}>

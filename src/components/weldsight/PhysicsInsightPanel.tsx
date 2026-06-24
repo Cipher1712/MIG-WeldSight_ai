@@ -19,7 +19,7 @@ export function PhysicsInsightPanel({
       <div className="flex items-center justify-between">
         <h2 className="text-2xl">Physics Insight</h2>
         <span className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
-          {materialLabel} · {thickness_mm} mm
+          {materialLabel} | {thickness_mm} mm
         </span>
       </div>
 

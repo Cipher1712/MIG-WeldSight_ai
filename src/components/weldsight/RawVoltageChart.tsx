@@ -15,7 +15,7 @@ export function RawVoltageChart({ data }: { data: VoltageSample[] }) {
       <div className="h-[260px] w-full">
         {data.length === 0 ? (
           <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border/70 text-sm italic text-muted-foreground">
-            Waiting for voltage samples…
+            Waiting for voltage samples...
           </div>
         ) : (
           <ResponsiveContainer>
