@@ -266,4 +266,4 @@ The `firmware/` directory contains the ESP32 C++ source that samples arc voltage
 
 ## License
 
-Cengre of Excellence in Advanced Manufacturing Technology, Indian Institute of Technology Kharagpur
+Centre of Excellence in Advanced Manufacturing Technology, Indian Institute of Technology Kharagpur
